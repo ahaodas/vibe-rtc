@@ -1,0 +1,35 @@
+{
+  "name": "vibe-rtc",
+  "version": "0.0.0",
+  "main": "index.js",
+  "private": true,
+  "packageManager": "yarn@4.10.3",
+  "scripts": {
+    "install:all": "yarn install --immutable",
+    "build:libs": "yarn workspaces foreach -A --include @vibe-rtc/rtc-core --include @vibe-rtc/rtc-firebase run build",
+    "build:pkg": "yarn workspace vibe-rtc-common build",
+    "build:all": "yarn run build:libs && yarn run build:pkg",
+    "test:int": "yarn workspace @vibe-rtc/rtc-firebase test",
+    "test:e2e": "yarn workspace @vibe-rtc/rtc-e2e test",
+    "show-report": "yarn workspace @vibe-rtc/rtc-e2e show-report",
+    "format": "biome format --write ./packages/**/* --verbose",
+    "lint": "biome lint",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
+  },
+  "workspaces": {
+    "packages": [
+      "packages/*"
+    ]
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "devDependencies": {
+    "@biomejs/biome": "2.3.2",
+    "@types/node": "^24.9.1",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.3"
+  }
+}

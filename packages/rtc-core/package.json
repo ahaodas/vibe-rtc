@@ -1,0 +1,24 @@
+{
+    "name": "@vibe-rtc/rtc-core",
+    "version": "0.0.0",
+    "type": "module",
+    "main": "dist/index.cjs",
+    "module": "dist/index.mjs",
+    "types": "dist/index.d.ts",
+    "sideEffects": false,
+    "publishConfig": {
+        "access": "public"
+    },
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs"
+        }
+    },
+    "scripts": {
+        "build": "tsup src/index.ts --dts --format esm,cjs",
+        "dev": "tsup src/index.ts --dts --format esm,cjs --watch",
+        "test": "vitest run"
+    }
+}

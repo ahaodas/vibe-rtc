@@ -1,0 +1,18 @@
+{
+    "name": "@vibe-rtc/rtc-e2e",
+    "version": "0.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev:e2e": "E2E=1 vite dev --mode e2e",
+        "test": "playwright test --project=chromium"
+    },
+    "devDependencies": {
+        "@playwright/test": "^1.56.1",
+        "vite": "^7.1.12"
+    },
+    "dependencies": {
+        "@vibe-rtc/rtc-core": "workspace:^",
+        "@vibe-rtc/rtc-firebase": "workspace:^"
+    }
+}

@@ -1,0 +1,29 @@
+{
+    "name": "@vibe-rtc/rtc-firebase",
+    "version": "0.0.0",
+    "type": "module",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.js",
+            "require": "./dist/index.cjs"
+        }
+    },
+    "publishConfig": {
+        "access": "public"
+    },
+    "sideEffects": false,
+    "scripts": {
+        "build": "tsup src/index.ts --dts --format esm,cjs --clean",
+        "test": "vitest -c vitest.config.ts --run",
+        "emulator": "firebase emulators:start --project demo --only firestore,auth --import=.fb-data --export-on-exit"
+    },
+    "dependencies": {
+        "@vibe-rtc/rtc-core": "workspace:^",
+        "firebase": "^10.14.1"
+    },
+    "devDependencies": {
+        "dotenv": "^17.2.3",
+        "vitest": "^4.0.4"
+    }
+}
