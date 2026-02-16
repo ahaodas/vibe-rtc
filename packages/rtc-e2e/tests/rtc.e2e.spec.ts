@@ -1,7 +1,10 @@
-import { test, expect, Page } from '@playwright/test'
+import { expect, Page, test } from '@playwright/test'
 
 type Who = 'caller' | 'callee'
 const OTHER: Record<Who, Who> = { caller: 'callee', callee: 'caller' }
+
+const READY_TIMEOUT_MS = 15_000
+const RECOVERY_SLA_MS = 8_000
 
 function captureConsole(page: Page, tag: string) {
     page.on('console', (msg) => {
@@ -14,15 +17,55 @@ function captureConsole(page: Page, tag: string) {
     })
 }
 
+async function waitAppReady(page: Page) {
+    await page.waitForFunction(() => !!(window as any).app)
+}
+
+async function waitRoleReadyNoAssist(page: Page, who: Who, timeoutMs = READY_TIMEOUT_MS) {
+    const startedAt = Date.now()
+    await page.evaluate(async ({ who, timeoutMs }) => {
+        const obj = (window as any)[who]
+        if (!obj) throw new Error(`Role object is missing: ${who}`)
+        await obj.waitReadyNoAssist(timeoutMs)
+    }, { who, timeoutMs })
+    return Date.now() - startedAt
+}
+
+async function assertStateConnected(page: Page, who: Who) {
+    const st = await page.evaluate((w) => (window as any)[w].getState(), who)
+    expect(st.pcState, `${who} pcState`).toBe('connected')
+    expect(st.fast?.state, `${who} fast channel`).toBe('open')
+    expect(st.reliable?.state, `${who} reliable channel`).toBe('open')
+}
+
+async function assertPingStrict(from: Page, whoFrom: Who, to: Page, expectedText: string) {
+    if (whoFrom === 'caller') {
+        await from.evaluate(async (t) => { await (window as any).caller.sendReliable(t) }, expectedText)
+        await expect
+            .poll(async () => {
+                const got = await to.evaluate(() => (window as any).callee.takeMessages())
+                return got.includes(expectedText)
+            }, { timeout: 5_000, interval: 100 })
+            .toBe(true)
+        return
+    }
+
+    await from.evaluate(async (t) => { await (window as any).callee.sendReliable(t) }, expectedText)
+    await expect
+        .poll(async () => {
+            const got = await to.evaluate(() => (window as any).caller.takeMessages())
+            return got.includes(expectedText)
+        }, { timeout: 5_000, interval: 100 })
+        .toBe(true)
+}
+
 async function bootPair(pCaller: Page, pCallee: Page, baseURL: string) {
     captureConsole(pCaller, 'caller')
     captureConsole(pCallee, 'callee')
 
     await pCaller.goto(`${baseURL}/e2e-rtc.html`)
     await pCallee.goto(`${baseURL}/e2e-rtc.html`)
-
-    await pCaller.waitForFunction(() => !!(window as any).app)
-    await pCallee.waitForFunction(() => !!(window as any).app)
+    await Promise.all([waitAppReady(pCaller), waitAppReady(pCallee)])
 
     const roomId = await pCaller.evaluate(async () => {
         ;(window as any).caller = await (window as any).app.makeCaller()
@@ -34,174 +77,127 @@ async function bootPair(pCaller: Page, pCallee: Page, baseURL: string) {
         await (window as any).callee.joinRoom(rid)
     }, roomId)
 
-    // пробуем «поднять» обе стороны
-    await ensurePairReady(pCaller, pCallee, 20000)
+    await Promise.all([
+        waitRoleReadyNoAssist(pCaller, 'caller'),
+        waitRoleReadyNoAssist(pCallee, 'callee'),
+    ])
 
-    // sanity ping
-    await assertPing(pCaller, 'caller', pCallee, 'sanity-from-caller')
-    await assertPing(pCallee, 'callee', pCaller, 'sanity-from-callee')
+    await assertStateConnected(pCaller, 'caller')
+    await assertStateConnected(pCallee, 'callee')
 
+    await assertPingStrict(pCaller, 'caller', pCallee, 'sanity-from-caller')
+    await assertPingStrict(pCallee, 'callee', pCaller, 'sanity-from-callee')
     return roomId
 }
 
-async function ensurePairReady(pCaller: Page, pCallee: Page, totalMs = 20000) {
-    await Promise.all([
-        pCaller.evaluate(async (ms) => { await (window as any).caller.ensureReady(ms) }, totalMs),
-        // небольшое смещение, чтобы снизить шанс glare/коллизий
-        (async () => { await pCallee.waitForTimeout(150); await pCallee.evaluate(async (ms) => { await (window as any).callee.ensureReady(ms) }, totalMs) })(),
-    ])
-}
-
-async function reloadRole(page: Page, who: Who, roomId: string, otherPage: Page) {
+async function reloadRoleStrict(page: Page, who: Who, roomId: string) {
     await page.reload()
-    await page.waitForFunction(() => !!(window as any).app)
+    await waitAppReady(page)
 
     await page.evaluate(async ({ who, roomId }) => {
         if (who === 'caller') {
             ;(window as any).caller = await (window as any).app.makeCaller()
             await (window as any).caller.joinRoom(roomId)
-        } else {
-            ;(window as any).callee = await (window as any).app.makeCallee()
-            await (window as any).callee.joinRoom(roomId)
+            return
         }
+        ;(window as any).callee = await (window as any).app.makeCallee()
+        await (window as any).callee.joinRoom(roomId)
     }, { who, roomId })
 
-    // сначала восстанавливаемся на перезагруженной стороне
-    await page.evaluate(async (w) => {
-        const obj = (window as any)[w]
-        await obj.ensureReady(20000)
-        obj.flush?.()
-    }, who)
-
-    // затем «пинаем» вторую сторону (она могла залипнуть в checking)
-    await otherPage.evaluate(async (w) => {
-        const obj = (window as any)[w]
-        await obj.ensureReady(12000)
-        obj.flush?.()
-    }, OTHER[who])
+    return await waitRoleReadyNoAssist(page, who)
 }
 
-async function assertPing(from: Page, whoFrom: Who, to: Page, expectedText: string) {
-    const trySend = async (label: string) => {
-        // eslint-disable-next-line no-console
-        console.log(`[assertPing:${label}] send "${expectedText}" from=${whoFrom}`)
-        if (whoFrom === 'caller') {
-            await from.evaluate(async (t) => { await (window as any).caller.sendReliable(t) }, expectedText)
-        } else {
-            await from.evaluate(async (t) => { await (window as any).callee.sendReliable(t) }, expectedText)
-        }
-        await to.waitForTimeout(300)
-        const got = whoFrom === 'caller'
-            ? await to.evaluate(() => (window as any).callee.takeMessages())
-            : await to.evaluate(() => (window as any).caller.takeMessages())
-        // eslint-disable-next-line no-console
-        console.log(`[assertPing:${label}] got=`, got)
-        return got.includes(expectedText)
+async function cleanupPair(pCaller: Page, pCallee: Page) {
+    for (const [page, who] of [
+        [pCaller, 'caller'],
+        [pCallee, 'callee'],
+    ] as const) {
+        try {
+            await page.evaluate(async (w) => {
+                const obj = (window as any)[w]
+                if (!obj?.endRoom) return
+                await obj.endRoom()
+            }, who)
+        } catch {}
     }
-
-    if (await trySend('1')) return
-
-    // лечим принимающего
-    await to.evaluate(async (w) => { await (window as any)[w].ensureReady(6000) }, whoFrom === 'caller' ? 'callee' : 'caller')
-    if (await trySend('2')) return
-
-    // лечим отправителя
-    await from.evaluate(async (w) => { await (window as any)[w].ensureReady(6000) }, whoFrom)
-    if (await trySend('3')) return
-
-    // финальная диагностика
-    const sFrom = await from.evaluate((w) => (window as any)[w].getState(), whoFrom)
-    const sTo = await to.evaluate((w) => (window as any)[w].getState(), whoFrom === 'caller' ? 'callee' : 'caller')
-    // eslint-disable-next-line no-console
-    console.log(`[assertPing:diag] from=`, sFrom, `to=`, sTo)
-
-    expect(false, `ping "${expectedText}" not delivered`).toBe(true)
 }
 
-test.describe('reload sequences (caller/callee)', () => {
-    test.setTimeout(120_000) // на всякий случай увеличим лимит набора тестов
+test.describe('reload recovery (strict no-assist)', () => {
+    test.setTimeout(120_000)
 
-    test('A) callee reload x3, then caller reload x2 (с проверкой после каждого шага)', async ({ context, baseURL }) => {
-        const pCaller = await context.newPage()
-        const pCallee = await context.newPage()
-        const roomId = await bootPair(pCaller, pCallee, baseURL)
+    let pCaller: Page
+    let pCallee: Page
+    let roomId: string
 
-        for (let i = 1; i <= 3; i++) {
-            await reloadRole(pCallee, 'callee', roomId, pCaller)
-            await assertPing(pCaller, 'caller', pCallee, `after-callee-reload-${i}`)
-            await assertPing(pCallee, 'callee', pCaller, `back-callee-reload-${i}`)
-        }
-
-        for (let j = 1; j <= 2; j++) {
-            await reloadRole(pCaller, 'caller', roomId, pCallee)
-            await assertPing(pCallee, 'callee', pCaller, `after-caller-reload-${j}`)
-            await assertPing(pCaller, 'caller', pCallee, `back-caller-reload-${j}`)
-        }
+    test.beforeEach(async ({ context, baseURL }) => {
+        pCaller = await context.newPage()
+        pCallee = await context.newPage()
+        roomId = await bootPair(pCaller, pCallee, baseURL!)
     })
 
-    test('B) чередование: caller → callee → caller → callee (по одному разу)', async ({ context, baseURL }) => {
-        const pCaller = await context.newPage()
-        const pCallee = await context.newPage()
-        const roomId = await bootPair(pCaller, pCallee, baseURL)
+    test.afterEach(async () => {
+        await cleanupPair(pCaller, pCallee)
+    })
 
+    test('caller reload recovers within SLA and message flow survives', async () => {
+        const elapsedMs = await reloadRoleStrict(pCaller, 'caller', roomId)
+        expect(elapsedMs, `caller recovery must be <= ${RECOVERY_SLA_MS}ms`).toBeLessThanOrEqual(RECOVERY_SLA_MS)
+
+        await waitRoleReadyNoAssist(pCallee, 'callee')
+        await assertStateConnected(pCaller, 'caller')
+        await assertStateConnected(pCallee, 'callee')
+
+        await assertPingStrict(pCaller, 'caller', pCallee, 'after-caller-reload')
+        await assertPingStrict(pCallee, 'callee', pCaller, 'pong-after-caller-reload')
+    })
+
+    test('callee reload recovers within SLA and message flow survives', async () => {
+        const elapsedMs = await reloadRoleStrict(pCallee, 'callee', roomId)
+        expect(elapsedMs, `callee recovery must be <= ${RECOVERY_SLA_MS}ms`).toBeLessThanOrEqual(RECOVERY_SLA_MS)
+
+        await waitRoleReadyNoAssist(pCaller, 'caller')
+        await assertStateConnected(pCaller, 'caller')
+        await assertStateConnected(pCallee, 'callee')
+
+        await assertPingStrict(pCaller, 'caller', pCallee, 'after-callee-reload')
+        await assertPingStrict(pCallee, 'callee', pCaller, 'pong-after-callee-reload')
+    })
+
+    test('alternating reloads preserve recovery for both sides', async () => {
         const seq: Who[] = ['caller', 'callee', 'caller', 'callee']
+
         let step = 0
         for (const who of seq) {
             step++
-            await reloadRole(who === 'caller' ? pCaller : pCallee, who, roomId, who === 'caller' ? pCallee : pCaller)
+            const reloaded = who === 'caller' ? pCaller : pCallee
+            const other = who === 'caller' ? pCallee : pCaller
 
-            await assertPing(
-                who === 'caller' ? pCaller : pCallee,
-                who,
-                who === 'caller' ? pCallee : pCaller,
-                `ping-after-${who}-reload-step-${step}`,
-            )
-            const back: Who = who === 'caller' ? 'callee' : 'caller'
-            await assertPing(
-                back === 'caller' ? pCaller : pCallee,
-                back,
-                back === 'caller' ? pCallee : pCaller,
-                `pong-after-${who}-reload-step-${step}`,
-            )
+            const elapsedMs = await reloadRoleStrict(reloaded, who, roomId)
+            expect(elapsedMs, `${who} recovery at step ${step} must be <= ${RECOVERY_SLA_MS}ms`)
+                .toBeLessThanOrEqual(RECOVERY_SLA_MS)
+
+            await waitRoleReadyNoAssist(other, OTHER[who])
+            await assertStateConnected(pCaller, 'caller')
+            await assertStateConnected(pCallee, 'callee')
+
+            await assertPingStrict(reloaded, who, other, `after-${who}-reload-step-${step}`)
+            await assertPingStrict(other, OTHER[who], reloaded, `pong-after-${who}-reload-step-${step}`)
         }
     })
 
-    test('C) стресс: дважды callee подряд, затем дважды caller подряд', async ({ context, baseURL }) => {
-        const pCaller = await context.newPage()
-        const pCallee = await context.newPage()
-        const roomId = await bootPair(pCaller, pCallee, baseURL)
+    test('same side double reload still recovers', async () => {
+        for (let i = 1; i <= 2; i++) {
+            const elapsedMs = await reloadRoleStrict(pCallee, 'callee', roomId)
+            expect(elapsedMs, `callee recovery #${i} must be <= ${RECOVERY_SLA_MS}ms`).toBeLessThanOrEqual(RECOVERY_SLA_MS)
+            await waitRoleReadyNoAssist(pCaller, 'caller')
+            await assertPingStrict(pCaller, 'caller', pCallee, `after-callee-double-${i}`)
+        }
 
-        await reloadRole(pCallee, 'callee', roomId, pCaller)
-        await assertPing(pCaller, 'caller', pCallee, 'after-callee-1')
-
-        await reloadRole(pCallee, 'callee', roomId, pCaller)
-        await assertPing(pCaller, 'caller', pCallee, 'after-callee-2')
-
-        await reloadRole(pCaller, 'caller', roomId, pCallee)
-        await assertPing(pCallee, 'callee', pCaller, 'after-caller-1')
-
-        await reloadRole(pCaller, 'caller', roomId, pCallee)
-        await assertPing(pCallee, 'callee', pCaller, 'after-caller-2')
-    })
-
-    test('D) длинная цепочка: C C C → K → C → K K (C=callee, K=caller)', async ({ context, baseURL }) => {
-        const pCaller = await context.newPage()
-        const pCallee = await context.newPage()
-        const roomId = await bootPair(pCaller, pCallee, baseURL)
-
-        const seq: Who[] = ['callee', 'callee', 'callee', 'caller', 'callee', 'caller', 'caller']
-        let idx = 0
-        for (const who of seq) {
-            idx++
-            await reloadRole(who === 'caller' ? pCaller : pCallee, who, roomId, who === 'caller' ? pCallee : pCaller)
-
-            const sender: Who = who === 'caller' ? 'callee' : 'caller'
-            await assertPing(
-                sender === 'caller' ? pCaller : pCallee,
-                sender,
-                sender === 'caller' ? pCallee : pCaller,
-                `chain-${idx}-from-${sender}`,
-            )
+        for (let i = 1; i <= 2; i++) {
+            const elapsedMs = await reloadRoleStrict(pCaller, 'caller', roomId)
+            expect(elapsedMs, `caller recovery #${i} must be <= ${RECOVERY_SLA_MS}ms`).toBeLessThanOrEqual(RECOVERY_SLA_MS)
+            await waitRoleReadyNoAssist(pCallee, 'callee')
+            await assertPingStrict(pCallee, 'callee', pCaller, `after-caller-double-${i}`)
         }
     })
 })

@@ -12,20 +12,6 @@ const firebaseConfig = {
 
 type Who = 'caller' | 'callee'
 
-function makeWaitReady(signaler: RTCSignaler) {
-    let fast = false, rel = false
-    let resolve!: () => void, reject!: (e: unknown) => void
-    const p = new Promise<void>((res, rej) => { resolve = res; reject = rej })
-
-    const done = () => { if (fast && rel) resolve() }
-    signaler.setFastOpenHandler(() => { fast = true; done() })
-    signaler.setReliableOpenHandler(() => { rel = true; done() })
-    signaler.setErrorHandler((e) => reject(e))
-
-    // возвращаем фабрику, чтобы пересоздавать «ожидатель» после recreate
-    return () => p
-}
-
 function makeLogger(prefix: string) {
     return {
         msg: (t: string) => console.log(`[${prefix}] msg`, t),
@@ -50,76 +36,20 @@ async function make(role: Who) {
     let inbox: string[] = []
     s.setMessageHandler((t) => inbox.push(t))
 
-    // «локальный» ожидатель открытия каналов
-    let waitReadyFactory = makeWaitReady(s)
-
-    // эвристика «залипа»
-    function looksHalfStuck() {
+    const isReady = () => {
         const st = s.inspect()
-        const ice = st.iceState
-        const pc = st.pcState
-        const fc = st.fast?.state
-        const rc = st.reliable?.state
-        const half =
-            (ice === 'checking' || pc === 'connecting') &&
-            (fc === 'connecting' || rc === 'connecting')
-        return half
+        return st.pcState === 'connected' &&
+            st.fast?.state === 'open' &&
+            st.reliable?.state === 'open'
     }
 
-    async function ensureReady(totalMs = 20000) {
-        const stNow = s.inspect()
-        const bothOpen =
-            stNow.fast?.state === 'open' &&
-            stNow.reliable?.state === 'open' &&
-            stNow.pcState === 'connected'
-
-        if (bothOpen) return
-
-        const looksHalfStuck = () => {
-            const st = s.inspect()
-            const ice = st.iceState
-            const pc = st.pcState
-            const fc = st.fast?.state
-            const rc = st.reliable?.state
-            return (ice === 'checking' || pc === 'connecting') &&
-                (fc === 'connecting' || rc === 'connecting')
+    async function waitReadyNoAssist(timeoutMs = 15000) {
+        const startedAt = Date.now()
+        while (Date.now() - startedAt < timeoutMs) {
+            if (isReady()) return
+            await new Promise((r) => setTimeout(r, 100))
         }
-
-        const t0 = Date.now()
-        const left = () => Math.max(1000, totalMs - (Date.now() - t0))
-
-        const tryWait = async (ms: number) => {
-            // быстрый выход, если уже всё ок
-            const ok = () => {
-                const st = s.inspect()
-                return st.pcState === 'connected' &&
-                    st.fast?.state === 'open' &&
-                    st.reliable?.state === 'open'
-            }
-            if (ok()) return true
-            try {
-                await s.waitReady({ timeoutMs: ms })
-                return true
-            } catch {
-                return ok()
-            }
-        }
-
-        // 1) просто подождать немного
-        if (await tryWait(Math.min(4000, left()))) return
-
-        // 2) если «полузалип» — мягко рестартуем ICE
-        if (looksHalfStuck()) {
-            try { await s.reconnectSoft() } catch {}
-            if (await tryWait(Math.min(6000, left()))) return
-        }
-
-        // 3) ещё один soft для симметрии/анти-glare
-        try { await s.reconnectSoft() } catch {}
-        if (await tryWait(Math.min(6000, left()))) return
-
-        // 4) хард до упора
-        await s.reconnectHard({ awaitReadyMs: left() })
+        throw new Error(`waitReadyNoAssist timeout: ${JSON.stringify(s.inspect())}`)
     }
 
     return {
@@ -136,7 +66,7 @@ async function make(role: Who) {
         },
 
         // тестовые хелперы
-        ensureReady,
+        waitReadyNoAssist,
         waitReady: (ms = 15000) => s.waitReady({ timeoutMs: ms }),
         sendFast: (m: string) => s.sendFast(m),
         sendReliable: (m: string) => s.sendReliable(m),
