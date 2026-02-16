@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test rtc-core
+        run: pnpm --filter @vibe-rtc/rtc-core test
+
+      - name: Test rtc-react
+        run: pnpm --filter @vibe-rtc/rtc-react test
+
+      - name: Test rtc-firebase
+        run: pnpm --filter @vibe-rtc/rtc-firebase test
+
+      - name: Build packages
+        run: |
+          pnpm --filter @vibe-rtc/rtc-core build
+          pnpm --filter @vibe-rtc/rtc-firebase build
+          pnpm --filter @vibe-rtc/rtc-react build
+          pnpm --filter vibe-rtc-common build
+
+      - name: Build demo
+        run: pnpm --filter @vibe-rtc/demo build

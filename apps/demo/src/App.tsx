@@ -1,131 +1,133 @@
-import * as React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useVibeRTC } from "@vibe-rtc/rtc-react";
+import { useVibeRTC } from '@vibe-rtc/rtc-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 type LogLine = {
-    at: string;
-    lane: "fast" | "reliable" | "event";
-    text: string;
-};
+    at: string
+    lane: 'fast' | 'reliable' | 'event'
+    text: string
+}
+
+const APP_BASE_PATH = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '')
+const toBasePath = (path: string) => `${APP_BASE_PATH}${path.startsWith('/') ? path : `/${path}`}`
 
 export function App() {
-    const rtc = useVibeRTC();
-    const [fastText, setFastText] = useState("ping-fast");
-    const [reliableText, setReliableText] = useState("ping-reliable");
-    const [logs, setLogs] = useState<LogLine[]>([]);
-    const autoRouteHandledRef = useRef<string | null>(null);
+    const rtc = useVibeRTC()
+    const [fastText, setFastText] = useState('ping-fast')
+    const [reliableText, setReliableText] = useState('ping-reliable')
+    const [logs, setLogs] = useState<LogLine[]>([])
+    const autoRouteHandledRef = useRef<string | null>(null)
 
-    const match = window.location.pathname.match(/^\/attach\/(caller|callee)\/([^/]+)$/);
-    const routeRole = match?.[1] as "caller" | "callee" | undefined;
-    const routeRoomId = match?.[2] ? decodeURIComponent(match[2]) : "";
-    const mode: "initial" | "caller" | "callee" = routeRole ?? "initial";
+    const match = window.location.pathname.match(/\/attach\/(caller|callee)\/([^/]+)$/)
+    const routeRole = match?.[1] as 'caller' | 'callee' | undefined
+    const routeRoomId = match?.[2] ? decodeURIComponent(match[2]) : ''
+    const mode: 'initial' | 'caller' | 'callee' = routeRole ?? 'initial'
 
-    const hasChannel = Boolean(rtc.signaler && rtc.roomId);
-    const canSend = rtc.status === "connected";
+    const hasChannel = Boolean(rtc.signaler && rtc.roomId)
+    const canSend = rtc.status === 'connected'
 
     const signalingState = rtc.booting
-        ? "Initializing signaling"
+        ? 'Initializing signaling'
         : rtc.bootError
-          ? "Signaling boot error"
-          : "Signaling ready";
-    const roomBusy = rtc.booting || rtc.status === "connecting";
+          ? 'Signaling boot error'
+          : 'Signaling ready'
+    const roomBusy = rtc.booting || rtc.status === 'connecting'
     const roomState = !rtc.roomId
-        ? "No room"
-        : rtc.lastError?.code === "ROOM_NOT_FOUND"
-          ? "Room removed"
-          : "Room active";
+        ? 'No room'
+        : rtc.lastError?.code === 'ROOM_NOT_FOUND'
+          ? 'Room removed'
+          : 'Room active'
     const channelState = !hasChannel
-        ? "No channel"
-        : rtc.status === "connecting"
-          ? "Connecting"
-          : rtc.status === "connected"
-            ? "Connected"
-            : rtc.status === "disconnected"
-              ? "Disconnected"
-              : rtc.status === "error"
-                ? "Error"
-                : "Idle";
-    const sendState = !hasChannel ? "No channel" : canSend ? "Ready to send" : "Waiting to send";
+        ? 'No channel'
+        : rtc.status === 'connecting'
+          ? 'Connecting'
+          : rtc.status === 'connected'
+            ? 'Connected'
+            : rtc.status === 'disconnected'
+              ? 'Disconnected'
+              : rtc.status === 'error'
+                ? 'Error'
+                : 'Idle'
+    const sendState = !hasChannel ? 'No channel' : canSend ? 'Ready to send' : 'Waiting to send'
 
     const callerUrl = useMemo(() => {
-        if (!rtc.roomId) return "";
-        return `${window.location.origin}/attach/caller/${rtc.roomId}`;
-    }, [rtc.roomId]);
+        if (!rtc.roomId) return ''
+        return `${window.location.origin}${toBasePath(`/attach/caller/${rtc.roomId}`)}`
+    }, [rtc.roomId])
 
     const calleeUrl = useMemo(() => {
-        if (!rtc.roomId) return "";
-        return `${window.location.origin}/attach/callee/${rtc.roomId}`;
-    }, [rtc.roomId]);
+        if (!rtc.roomId) return ''
+        return `${window.location.origin}${toBasePath(`/attach/callee/${rtc.roomId}`)}`
+    }, [rtc.roomId])
 
     useEffect(() => {
-        if (!rtc.lastFastMessage) return;
+        if (!rtc.lastFastMessage) return
         setLogs((prev) => [
             {
                 at: new Date(rtc.lastFastMessage.at).toLocaleTimeString(),
-                lane: "fast",
+                lane: 'fast',
                 text: rtc.lastFastMessage.data,
             },
             ...prev,
-        ]);
-    }, [rtc.messageSeqFast, rtc.lastFastMessage]);
+        ])
+    }, [rtc.lastFastMessage])
 
     useEffect(() => {
-        if (!rtc.lastReliableMessage) return;
+        if (!rtc.lastReliableMessage) return
         setLogs((prev) => [
             {
                 at: new Date(rtc.lastReliableMessage.at).toLocaleTimeString(),
-                lane: "reliable",
+                lane: 'reliable',
                 text: rtc.lastReliableMessage.data,
             },
             ...prev,
-        ]);
-    }, [rtc.messageSeqReliable, rtc.lastReliableMessage]);
+        ])
+    }, [rtc.lastReliableMessage])
 
     useEffect(() => {
         setLogs((prev) => [
             {
                 at: new Date().toLocaleTimeString(),
-                lane: "event",
+                lane: 'event',
                 text: `status: ${rtc.status}`,
             },
             ...prev,
-        ]);
-    }, [rtc.status]);
+        ])
+    }, [rtc.status])
 
     useEffect(() => {
-        if (!routeRole || !routeRoomId) return;
-        const key = `${routeRole}:${routeRoomId}`;
-        if (autoRouteHandledRef.current === key) return;
-        autoRouteHandledRef.current = key;
+        if (!routeRole || !routeRoomId) return
+        const key = `${routeRole}:${routeRoomId}`
+        if (autoRouteHandledRef.current === key) return
+        autoRouteHandledRef.current = key
 
-        if (routeRole === "caller") {
-            void rtc.attachAsCaller(routeRoomId);
+        if (routeRole === 'caller') {
+            void rtc.attachAsCaller(routeRoomId)
         } else {
-            void rtc.attachAsCallee(routeRoomId);
+            void rtc.attachAsCallee(routeRoomId)
         }
-    }, [routeRole, routeRoomId, rtc.attachAsCaller, rtc.attachAsCallee]);
+    }, [routeRole, routeRoomId, rtc.attachAsCaller, rtc.attachAsCallee])
 
     const createRoom = async () => {
-        const roomId = await rtc.createChannel();
-        const nextPath = `/attach/caller/${encodeURIComponent(roomId)}`;
-        window.history.replaceState({}, "", nextPath);
-        autoRouteHandledRef.current = `caller:${roomId}`;
-    };
+        const roomId = await rtc.createChannel()
+        const nextPath = toBasePath(`/attach/caller/${encodeURIComponent(roomId)}`)
+        window.history.replaceState({}, '', nextPath)
+        autoRouteHandledRef.current = `caller:${roomId}`
+    }
 
     const attachCurrentRole = async () => {
-        if (!routeRoomId) return;
-        if (mode === "caller") await rtc.attachAsCaller(routeRoomId);
-        if (mode === "callee") await rtc.attachAsCallee(routeRoomId);
-    };
+        if (!routeRoomId) return
+        if (mode === 'caller') await rtc.attachAsCaller(routeRoomId)
+        if (mode === 'callee') await rtc.attachAsCallee(routeRoomId)
+    }
 
     const endRoomAndReturnInitial = async () => {
-        await rtc.endRoom();
-        autoRouteHandledRef.current = null;
-        window.history.replaceState({}, "", "/");
-    };
+        await rtc.endRoom()
+        autoRouteHandledRef.current = null
+        window.history.replaceState({}, '', toBasePath('/'))
+    }
 
     return (
-        <main className={`lab ${roomBusy ? "isBusy" : ""}`}>
+        <main className={`lab ${roomBusy ? 'isBusy' : ''}`}>
             <header className="hero">
                 <div className="heroTop">
                     <h1>Vibe RTC Manual Lab</h1>
@@ -150,16 +152,20 @@ export function App() {
                         <span className="flowVal">{sendState}</span>
                     </div>
                 </div>
-                {rtc.lastError?.code === "ROOM_NOT_FOUND" && (
-                    <p className="error">The room no longer exists. Ask host to create a new one.</p>
+                {rtc.lastError?.code === 'ROOM_NOT_FOUND' && (
+                    <p className="error">
+                        The room no longer exists. Ask host to create a new one.
+                    </p>
                 )}
             </header>
 
             <section className="panel">
-                {mode === "initial" && (
+                {mode === 'initial' && (
                     <>
                         <div className="actions">
-                            <button onClick={() => void createRoom()}>Create Room</button>
+                            <button type="button" onClick={() => void createRoom()}>
+                                Create Room
+                            </button>
                         </div>
                         {rtc.roomId ? (
                             <div className="actions">
@@ -180,12 +186,12 @@ export function App() {
                     </>
                 )}
 
-                {mode !== "initial" && (
+                {mode !== 'initial' && (
                     <>
                         <div className="row">
-                            <label className="label">Room ID</label>
+                            <span className="label">Room ID</span>
                             <div className="input">{routeRoomId}</div>
-                            <button onClick={() => void attachCurrentRole()}>
+                            <button type="button" onClick={() => void attachCurrentRole()}>
                                 Attach as {mode}
                             </button>
                         </div>
@@ -193,9 +199,14 @@ export function App() {
                         <div className="actions">
                             {hasChannel && (
                                 <>
-                                    <button onClick={() => void rtc.disconnect()}>Disconnect Channel</button>
-                                    {mode === "caller" && (
-                                        <button onClick={() => void endRoomAndReturnInitial()}>
+                                    <button type="button" onClick={() => void rtc.disconnect()}>
+                                        Disconnect Channel
+                                    </button>
+                                    {mode === 'caller' && (
+                                        <button
+                                            type="button"
+                                            onClick={() => void endRoomAndReturnInitial()}
+                                        >
                                             End Room (Host)
                                         </button>
                                     )}
@@ -203,15 +214,22 @@ export function App() {
                             )}
                             {hasChannel && (
                                 <>
-                                    <button onClick={() => void rtc.reconnectSoft()}>Reconnect Soft</button>
-                                    <button onClick={() => void rtc.reconnectHard({ awaitReadyMs: 12_000 })}>
+                                    <button type="button" onClick={() => void rtc.reconnectSoft()}>
+                                        Reconnect Soft
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            void rtc.reconnectHard({ awaitReadyMs: 12_000 })
+                                        }
+                                    >
                                         Reconnect Hard
                                     </button>
                                 </>
                             )}
                         </div>
 
-                        {mode === "caller" && (
+                        {mode === 'caller' && (
                             <div className="linkbox">
                                 <a href={calleeUrl} target="_blank" rel="noreferrer">
                                     {calleeUrl}
@@ -230,7 +248,7 @@ export function App() {
                     </p>
                     {rtc.lastError && (
                         <p className="error">
-                            {rtc.lastError.code ? `${rtc.lastError.code}: ` : ""}
+                            {rtc.lastError.code ? `${rtc.lastError.code}: ` : ''}
                             {rtc.lastError.message}
                         </p>
                     )}
@@ -238,25 +256,36 @@ export function App() {
                     {hasChannel ? (
                         <>
                             <div className="row">
-                                <label className="label">Fast</label>
+                                <label className="label" htmlFor="fast-input">
+                                    Fast
+                                </label>
                                 <input
+                                    id="fast-input"
                                     className="input"
                                     value={fastText}
                                     onChange={(e) => setFastText(e.target.value)}
                                 />
-                                <button onClick={() => void rtc.sendFast(fastText)} disabled={!canSend}>
+                                <button
+                                    type="button"
+                                    onClick={() => void rtc.sendFast(fastText)}
+                                    disabled={!canSend}
+                                >
                                     Send
                                 </button>
                             </div>
 
                             <div className="row">
-                                <label className="label">Reliable</label>
+                                <label className="label" htmlFor="reliable-input">
+                                    Reliable
+                                </label>
                                 <input
+                                    id="reliable-input"
                                     className="input"
                                     value={reliableText}
                                     onChange={(e) => setReliableText(e.target.value)}
                                 />
                                 <button
+                                    type="button"
                                     onClick={() => void rtc.sendReliable(reliableText)}
                                     disabled={!canSend}
                                 >
@@ -288,5 +317,5 @@ export function App() {
                 </ul>
             </section>
         </main>
-    );
+    )
 }

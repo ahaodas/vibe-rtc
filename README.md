@@ -1,5 +1,9 @@
 # vibe-rtc
 
+[![CI](https://github.com/ahaodas/vibe-rtc/actions/workflows/ci.yml/badge.svg)](https://github.com/ahaodas/vibe-rtc/actions/workflows/ci.yml)
+[![Pages](https://github.com/ahaodas/vibe-rtc/actions/workflows/pages.yml/badge.svg)](https://github.com/ahaodas/vibe-rtc/actions/workflows/pages.yml)
+[![Version](https://img.shields.io/github/v/tag/ahaodas/vibe-rtc?label=version)](https://github.com/ahaodas/vibe-rtc/tags)
+
 Monorepo with tools for stable browser-to-browser WebRTC data connections with signaling via Firebase Firestore.
 
 ## Packages
@@ -35,6 +39,10 @@ Demo app lives in `apps/demo`.
 ```bash
 pnpm --filter @vibe-rtc/demo dev
 ```
+
+Production demo is deployed via GitHub Pages from `master/main` by workflow:
+
+- `Deploy Demo to GitHub Pages` (`.github/workflows/pages.yml`)
 
 Required env for demo and tests (via Vite env):
 
