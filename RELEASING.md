@@ -42,6 +42,17 @@ Options:
 
 Recommendation: keep npm publish manual/explicit (`--publish`) to avoid accidental public releases.
 
+## npm Publish from CI
+
+`Publish Packages to npm` workflow (`.github/workflows/publish-npm.yml`) runs on meta release tags (`v*`):
+
+1. verifies tests/build
+2. publishes packages via `pnpm release` (changesets)
+
+Required repository secret:
+
+- `NPM_TOKEN` (automation/granular token with publish rights and 2FA bypass for CI)
+
 Manual flow (if needed):
 
 1. Create release branch from `master`:
