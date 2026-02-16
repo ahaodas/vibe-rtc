@@ -1,0 +1,94 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function uid() {
+      return request.auth.uid;
+    }
+
+    function roomDoc(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId));
+    }
+
+    function isRoomCaller(roomId) {
+      return roomDoc(roomId).data.callerUid == uid();
+    }
+
+    function isRoomCallee(roomId) {
+      return roomDoc(roomId).data.calleeUid == uid();
+    }
+
+    function isRoomCreator(roomId) {
+      return roomDoc(roomId).data.creatorUid == uid();
+    }
+
+    function roomWritableByParticipant(roomId) {
+      return isRoomCaller(roomId) || isRoomCallee(roomId) || isRoomCreator(roomId);
+    }
+
+    function validRoomKeys() {
+      return request.resource.data.keys().hasOnly([
+        'creatorUid',
+        'callerUid',
+        'calleeUid',
+        'offer',
+        'answer',
+        'epoch',
+        'callerHeartbeatAt',
+        'calleeHeartbeatAt',
+        'createdAt',
+        'updatedAt',
+        'expiresAt'
+      ]);
+    }
+
+    function validCandidateKeys() {
+      return request.resource.data.keys().hasOnly([
+        'candidate',
+        'sdpMid',
+        'sdpMLineIndex',
+        'usernameFragment',
+        'epoch',
+        'createdAt'
+      ]);
+    }
+
+    match /rooms/{roomId} {
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && validRoomKeys()
+        && request.resource.data.creatorUid == uid()
+        && request.resource.data.callerUid == uid();
+
+      allow update: if signedIn()
+        && validRoomKeys()
+        && (
+          roomWritableByParticipant(roomId)
+          || (resource.data.callerUid == null && request.resource.data.callerUid == uid())
+          || (resource.data.calleeUid == null && request.resource.data.calleeUid == uid())
+        );
+
+      allow delete: if signedIn() && (isRoomCaller(roomId) || isRoomCreator(roomId));
+
+      match /callerCandidates/{candidateId} {
+        allow read: if signedIn() && roomWritableByParticipant(roomId);
+        allow create, update: if signedIn()
+          && validCandidateKeys()
+          && isRoomCaller(roomId);
+        allow delete: if signedIn() && (isRoomCaller(roomId) || isRoomCreator(roomId));
+      }
+
+      match /calleeCandidates/{candidateId} {
+        allow read: if signedIn() && roomWritableByParticipant(roomId);
+        allow create, update: if signedIn()
+          && validCandidateKeys()
+          && isRoomCallee(roomId);
+        allow delete: if signedIn() && (isRoomCaller(roomId) || isRoomCreator(roomId));
+      }
+    }
+  }
+}

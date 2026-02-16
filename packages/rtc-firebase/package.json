@@ -16,7 +16,9 @@
     "scripts": {
         "build": "tsup src/index.ts --dts --format esm,cjs --clean",
         "test": "vitest -c vitest.config.ts --run",
-        "emulator": "firebase emulators:start --project demo --only firestore,auth --import=.fb-data --export-on-exit"
+        "emulator": "firebase emulators:start --project demo --only firestore,auth --import=.fb-data --export-on-exit",
+        "rules:deploy": "firebase deploy --only firestore:rules --project ${FIREBASE_PROJECT_ID:-demo}",
+        "rules:deploy:ci": "firebase deploy --only firestore:rules --project ${FIREBASE_PROJECT_ID:-demo} --non-interactive"
     },
     "dependencies": {
         "@vibe-rtc/rtc-core": "workspace:^",
