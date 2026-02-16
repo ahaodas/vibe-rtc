@@ -16,7 +16,9 @@
     "dev:pkgs": "pnpm -w --parallel --filter @vibe-rtc/* run build:watch",
     "lint": "biome lint",
     "changeset": "changeset",
+    "changeset:status": "changeset status",
     "version-packages": "changeset version",
+    "release:tag": "changeset tag",
     "release": "changeset publish"
   },
   "workspaces": {
@@ -29,6 +31,7 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@changesets/cli": "^2.29.7",
     "@biomejs/biome": "2.3.2",
     "@types/node": "^24.9.1",
     "tsup": "^8.5.0",
