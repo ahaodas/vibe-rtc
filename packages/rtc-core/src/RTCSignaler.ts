@@ -2,10 +2,10 @@
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-nocheck
 
-import type { SignalDB, OfferSDP, AnswerSDP } from './types'
-import { Subscription } from 'rxjs'
+import type { Subscription } from 'rxjs'
+import { RTCError, RTCErrorCode, type RTCErrorPhase, toRTCError } from './errors'
 import { createSignalStreams } from './signal-rx'
-import { RTCError, RTCErrorCode, toRTCError, type RTCErrorPhase } from './errors'
+import type { AnswerSDP, OfferSDP, SignalDB } from './types'
 
 let __seq = 0
 const now = () =>
@@ -25,8 +25,10 @@ function mkDbg(ctx: {
     role: 'caller' | 'callee'
     roomId: () => string | null
     pc: () => RTCPeerConnection | undefined
+    enabled: boolean
 }) {
     const p = (msg: string, extra?: any) => {
+        if (!ctx.enabled) return
         const pc = ctx.pc()
         const tag = `[${++__seq}|${now()}|${ctx.role}|${ctx.roomId() ?? 'no-room'}]`
         const sig = pc ? pc.signalingState : 'no-pc'
@@ -35,6 +37,7 @@ function mkDbg(ctx: {
         console.log(`${tag} ${msg}  [sig=${sig} ice=${ice} loc=${ls}]`, extra ?? '')
     }
     const pe = (msg: string, e: unknown) => {
+        if (!ctx.enabled) return
         const pc = ctx.pc()
         const tag = `[${++__seq}|${now()}|${ctx.role}|${ctx.roomId() ?? 'no-room'}]`
         const sig = pc ? pc.signalingState : 'no-pc'
@@ -49,6 +52,7 @@ type Unsub = () => void
 export type Role = 'caller' | 'callee'
 
 export interface RTCSignalerOptions {
+    debug?: boolean
     rtcConfiguration?: RTCConfiguration
     fastLabel?: string
     reliableLabel?: string
@@ -56,6 +60,7 @@ export interface RTCSignalerOptions {
     reliableInit?: RTCDataChannelInit
     fastBufferedAmountLowThreshold?: number
     reliableBufferedAmountLowThreshold?: number
+    waitReadyTimeoutMs?: number
     onMessage?: (text: string, meta: { reliable: boolean }) => void
     onConnectionStateChange?: (state: RTCPeerConnectionState) => void
     onFastOpen?: () => void
@@ -113,6 +118,7 @@ export class RTCSignaler {
     private readonly reliableInit: RTCDataChannelInit
     private readonly fastBALow: number
     private readonly reliableBALow: number
+    private readonly defaultWaitReadyTimeoutMs: number
 
     private lastHandledOfferSdp: string | null = null
     private lastHandledAnswerSdp: string | null = null
@@ -155,13 +161,25 @@ export class RTCSignaler {
     // --- Новое: RxJS обёртка над сигналингом + список подписок ---
     private streams
     private rxSubs: Subscription[] = []
+    private readonly debugEnabled: boolean
 
     constructor(
         private readonly role: Role,
         private readonly signalDb: SignalDB,
         opts: RTCSignalerOptions = {},
     ) {
-        this.dbg = mkDbg({ role: this.role, roomId: () => this.roomId, pc: () => this.pc })
+        const isTestEnv =
+            // Vitest exposes this marker in test runtime.
+            typeof (globalThis as any).__vitest_worker__ !== 'undefined' ||
+            // Fallback for Node/Jest-like runners.
+            (globalThis as any).process?.env?.NODE_ENV === 'test'
+        this.debugEnabled = opts.debug ?? isTestEnv
+        this.dbg = mkDbg({
+            role: this.role,
+            roomId: () => this.roomId,
+            pc: () => this.pc,
+            enabled: this.debugEnabled,
+        })
         this.polite = role === 'callee'
         this.rtcConfig = opts.rtcConfiguration ?? {
             iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -173,6 +191,7 @@ export class RTCSignaler {
         this.reliableInit = { ordered: true, ...(opts.reliableInit ?? {}) }
         this.fastBALow = opts.fastBufferedAmountLowThreshold ?? 64 * 1024
         this.reliableBALow = opts.reliableBufferedAmountLowThreshold ?? 256 * 1024
+        this.defaultWaitReadyTimeoutMs = opts.waitReadyTimeoutMs ?? 15000
 
         this.onMessage = opts.onMessage ?? (() => {})
         this.onConnectionStateChange = opts.onConnectionStateChange ?? (() => {})
@@ -182,7 +201,12 @@ export class RTCSignaler {
         this.onReliableClose = opts.onReliableClose ?? (() => {})
         this.onError = (e) => {
             this.lastErrorText = `${e.code}: ${e.message}`
-            ;(opts.onError ?? ((ee) => console.error('[RTCSignaler]', ee)))(e)
+            ;(
+                opts.onError ??
+                ((ee) => {
+                    if (this.debugEnabled) console.error('[RTCSignaler]', ee)
+                })
+            )(e)
             this.emitDebug('error')
         }
         this.onDebug = opts.onDebug ?? (() => {})
@@ -283,7 +307,8 @@ export class RTCSignaler {
         this.emitDebug('initPeer')
 
         // --- Rx: подписки на удалённые ICE-кандидаты ---
-        const remoteIce$ = this.role === 'caller' ? this.streams.calleeIce$ : this.streams.callerIce$
+        const remoteIce$ =
+            this.role === 'caller' ? this.streams.calleeIce$ : this.streams.callerIce$
         this.rxSubs.push(
             remoteIce$.subscribe(async (c) => {
                 if (!this.acceptEpoch((c as any).epoch)) return
@@ -299,7 +324,14 @@ export class RTCSignaler {
                     await this?.pc?.addIceCandidate(c)
                 } catch (e) {
                     this.onError(
-                        this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'signaling', true, undefined, false),
+                        this.raiseError(
+                            e,
+                            RTCErrorCode.SIGNALING_FAILED,
+                            'signaling',
+                            true,
+                            undefined,
+                            false,
+                        ),
                     )
                 }
             }),
@@ -411,11 +443,21 @@ export class RTCSignaler {
                         this.dbg.p('skip answer publish after epoch sync')
                         return
                     }
-                    await this.streams.setAnswer({ ...(answer as AnswerSDP), epoch: this.signalingEpoch })
+                    await this.streams.setAnswer({
+                        ...(answer as AnswerSDP),
+                        epoch: this.signalingEpoch,
+                    })
                     this.dbg.p('answer published')
                 } catch (e) {
                     this.onError(
-                        this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'negotiation', true, undefined, false),
+                        this.raiseError(
+                            e,
+                            RTCErrorCode.SIGNALING_FAILED,
+                            'negotiation',
+                            true,
+                            undefined,
+                            false,
+                        ),
                     )
                 } finally {
                     this.answering = false
@@ -455,8 +497,8 @@ export class RTCSignaler {
                     if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
                         this.dbg.p(
                             'skip answer: not waiting (state=' +
-                            (this.pc?.signalingState ?? 'no-pc') +
-                            ')',
+                                (this.pc?.signalingState ?? 'no-pc') +
+                                ')',
                         )
                         return
                     }
@@ -492,7 +534,14 @@ export class RTCSignaler {
                     }
                 } catch (e) {
                     this.onError(
-                        this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'negotiation', true, undefined, false),
+                        this.raiseError(
+                            e,
+                            RTCErrorCode.SIGNALING_FAILED,
+                            'negotiation',
+                            true,
+                            undefined,
+                            false,
+                        ),
                     )
                 }
             }),
@@ -588,7 +637,7 @@ export class RTCSignaler {
         this.initPeer()
         this.emitDebug('hard-reconnect initPeer')
 
-        const waitMs = opts.awaitReadyMs ?? 15000
+        const waitMs = opts.awaitReadyMs ?? this.defaultWaitReadyTimeoutMs
         await this.waitReady({ timeoutMs: waitMs })
         this.dbg.p('reconnectHard done')
         this.phase = 'connected'
@@ -708,9 +757,9 @@ export class RTCSignaler {
             this.emitDebug('signalingstatechange')
         })
         this.pc.addEventListener('iceconnectionstatechange', () => {
-            this.dbg.p('ice=' + this.pc!.iceConnectionState)
-            const s = this?.pc!.iceConnectionState
-            this.emitDebug('ice=' + s)
+            this.dbg.p(`ice=${this.pc?.iceConnectionState}`)
+            const s = this.pc?.iceConnectionState
+            this.emitDebug(`ice=${s}`)
             if (!this.roomId) return
             if (s === 'connected') {
                 this.phase = 'connected'
@@ -774,7 +823,14 @@ export class RTCSignaler {
                 else await this.streams.addCalleeIceCandidate(ice)
             } catch (e) {
                 this.onError(
-                    this.raiseError(e, RTCErrorCode.DB_UNAVAILABLE, 'signaling', true, undefined, false),
+                    this.raiseError(
+                        e,
+                        RTCErrorCode.DB_UNAVAILABLE,
+                        'signaling',
+                        true,
+                        undefined,
+                        false,
+                    ),
                 )
             }
         }
@@ -805,7 +861,14 @@ export class RTCSignaler {
             } catch (e) {
                 this.dbg.pe('negotiation error', e)
                 this.onError(
-                    this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'negotiation', true, undefined, false),
+                    this.raiseError(
+                        e,
+                        RTCErrorCode.SIGNALING_FAILED,
+                        'negotiation',
+                        true,
+                        undefined,
+                        false,
+                    ),
                 )
             } finally {
                 this.makingOffer = false
@@ -902,7 +965,7 @@ export class RTCSignaler {
     }
 
     async waitReady(opts: { timeoutMs?: number } = {}) {
-        const timeoutMs = opts.timeoutMs ?? 15000
+        const timeoutMs = opts.timeoutMs ?? this.defaultWaitReadyTimeoutMs
         const start = Date.now()
         while (Date.now() - start < timeoutMs) {
             const s = this.inspect()
@@ -932,17 +995,17 @@ export class RTCSignaler {
             signalingState: this.pc?.signalingState ?? 'none',
             fast: this.dcFast
                 ? {
-                    label: this.dcFast.label,
-                    state: this.dcFast.readyState,
-                    ba: this.dcFast.bufferedAmount,
-                }
+                      label: this.dcFast.label,
+                      state: this.dcFast.readyState,
+                      ba: this.dcFast.bufferedAmount,
+                  }
                 : null,
             reliable: this.dcReliable
                 ? {
-                    label: this.dcReliable.label,
-                    state: this.dcReliable.readyState,
-                    ba: this.dcReliable.bufferedAmount,
-                }
+                      label: this.dcReliable.label,
+                      state: this.dcReliable.readyState,
+                      ba: this.dcReliable.bufferedAmount,
+                  }
                 : null,
         }
     }
@@ -1016,18 +1079,27 @@ export class RTCSignaler {
         if (!this.roomId || this.phase === 'closing' || this.phase === 'idle') return
         this.clearRecoveryTimers()
         try {
-            await this.reconnectHard({ awaitReadyMs: 15000 })
+            await this.reconnectHard({ awaitReadyMs: this.defaultWaitReadyTimeoutMs })
         } catch (e) {
             this.dbg.pe('tryHardNow failed', e)
             this.onError(
-                this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'reconnect', true, undefined, false),
+                this.raiseError(
+                    e,
+                    RTCErrorCode.SIGNALING_FAILED,
+                    'reconnect',
+                    true,
+                    undefined,
+                    false,
+                ),
             )
         }
     }
 
     private acceptEpoch(epochLike: unknown): boolean {
         const epoch =
-            typeof epochLike === 'number' && Number.isFinite(epochLike) ? epochLike : this.signalingEpoch
+            typeof epochLike === 'number' && Number.isFinite(epochLike)
+                ? epochLike
+                : this.signalingEpoch
         if (epoch < this.signalingEpoch) return false
         if (epoch > this.signalingEpoch) {
             this.signalingEpoch = epoch

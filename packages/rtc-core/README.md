@@ -29,6 +29,8 @@ Implement `SignalDB` from `src/types.tsx` with methods for:
 import { RTCSignaler } from '@vibe-rtc/rtc-core'
 
 const signaler = new RTCSignaler('caller', signalDb, {
+  debug: true,
+  waitReadyTimeoutMs: 10000,
   rtcConfiguration: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] },
 })
 
@@ -42,6 +44,12 @@ await signaler.reconnectHard({ awaitReadyMs: 15000 })
 
 await signaler.endRoom()
 ```
+
+## Runtime Options
+
+- `debug`: enables internal console logs (`console.log`/`console.error`).  
+  By default logs are enabled only in test runtime.
+- `waitReadyTimeoutMs`: default timeout for `waitReady()` and `reconnectHard()` if no timeout is passed explicitly.
 
 ## Error Handling
 
