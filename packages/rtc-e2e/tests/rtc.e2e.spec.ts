@@ -63,6 +63,7 @@ async function waitRoleReadyNoAssist(page: Page, who: Who, timeoutMs = READY_TIM
 
 async function assertStateConnected(page: Page, who: Who) {
     const st = await page.evaluate((w) => (window as unknown as E2EWindow)[w]?.getState(), who)
+    if (!st) throw new Error(`Role state is missing: ${who}`)
     expect(st.pcState, `${who} pcState`).toBe('connected')
     expect(st.fast?.state, `${who} fast channel`).toBe('open')
     expect(st.reliable?.state, `${who} reliable channel`).toBe('open')

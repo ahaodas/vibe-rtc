@@ -61,11 +61,12 @@ export function App() {
 
     useEffect(() => {
         if (!rtc.lastFastMessage) return
+        const msg = rtc.lastFastMessage
         setLogs((prev) => [
             {
-                at: new Date(rtc.lastFastMessage.at).toLocaleTimeString(),
+                at: new Date(msg.at).toLocaleTimeString(),
                 lane: 'fast',
-                text: rtc.lastFastMessage.data,
+                text: msg.data,
             },
             ...prev,
         ])
@@ -73,11 +74,12 @@ export function App() {
 
     useEffect(() => {
         if (!rtc.lastReliableMessage) return
+        const msg = rtc.lastReliableMessage
         setLogs((prev) => [
             {
-                at: new Date(rtc.lastReliableMessage.at).toLocaleTimeString(),
+                at: new Date(msg.at).toLocaleTimeString(),
                 lane: 'reliable',
-                text: rtc.lastReliableMessage.data,
+                text: msg.data,
             },
             ...prev,
         ])

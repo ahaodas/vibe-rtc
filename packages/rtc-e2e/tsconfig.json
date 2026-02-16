@@ -4,6 +4,7 @@
         "baseUrl": ".",
         "types": ["vite/client"],
         "paths": {
+            "@/*": ["src/*"],
             "@vibe-rtc/rtc-core": ["../rtc-core/src/index.ts"],
             "@vibe-rtc/rtc-firebase": ["../rtc-firebase/src/index.ts"]
         }

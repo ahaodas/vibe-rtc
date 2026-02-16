@@ -1,11 +1,11 @@
 // apps/demo/src/main.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-import { App } from "./App";
-import "./styles.css";
+import type React from 'react'
+import { createRoot } from 'react-dom/client'
+import { App } from '@/App'
+import '@/styles.css'
 
-import { VibeRTCProvider } from "@vibe-rtc/rtc-react";
-import { FBAdapter, ensureFirebase } from "@vibe-rtc/rtc-firebase";
+import { ensureFirebase, FBAdapter } from '@vibe-rtc/rtc-firebase'
+import { VibeRTCProvider } from '@vibe-rtc/rtc-react'
 
 const rtcConfig = {
     iceServers: [
@@ -26,11 +26,9 @@ const rtcConfig = {
     iceCandidatePoolSize: 10,
 }
 
-
-const root = createRoot(document.getElementById("root")!);
+const root = createRoot(document.getElementById('root')!)
 
 function RTCWrapper({ children }: { children: React.ReactNode }) {
-
     // Вариант А: провайдер сам создаёт адаптер (booting/error внутри)
     const createSignalServer = async () => {
         const fbConfig = {
@@ -38,25 +36,25 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
             authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
             projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
             appId: import.meta.env.VITE_FIREBASE_APP_ID,
-        };
-        const { db, auth } = await ensureFirebase(fbConfig);
-        return new FBAdapter(db, auth);
-    };
+        }
+        const { db, auth } = await ensureFirebase(fbConfig)
+        return new FBAdapter(db, auth)
+    }
 
     return (
         <VibeRTCProvider
             rtcConfiguration={rtcConfig}
             renderLoading={<div>Custom boot…</div>}
-            renderBootError={(e) => <div style={{color:'crimson'}}>{e.message}</div>}
+            renderBootError={(e) => <div style={{ color: 'crimson' }}>{e.message}</div>}
             createSignalServer={createSignalServer}
         >
             {children}
         </VibeRTCProvider>
-    );
+    )
 }
 
 root.render(
     <RTCWrapper>
         <App />
-    </RTCWrapper>
-);
+    </RTCWrapper>,
+)
