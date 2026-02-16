@@ -20,6 +20,23 @@ For every change that should affect a published package:
 
 ## Local Release Flow (release branch + tags + merge)
 
+Recommended single-command flow:
+
+```bash
+pnpm release:local
+```
+
+This command:
+- validates clean git tree
+- runs `changeset version`
+- runs release checks (`build:libs` + tests)
+- creates release commit `chore(release): version packages`
+- creates package tags
+
+Use `pnpm release:local:publish` to also run publish at the end.
+
+Manual flow (if needed):
+
 1. Create release branch from `master`:
    - `git checkout master`
    - `git pull`

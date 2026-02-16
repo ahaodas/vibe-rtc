@@ -23,7 +23,9 @@
         "changeset:status": "changeset status",
         "version-packages": "changeset version",
         "release:tag": "changeset tag",
-        "release": "changeset publish"
+        "release": "changeset publish",
+        "release:local": "bash ./scripts/release-local.sh",
+        "release:local:publish": "bash ./scripts/release-local.sh --publish"
     },
     "workspaces": {
         "packages": [
