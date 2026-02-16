@@ -64,7 +64,10 @@ const ROOMS = 'rooms'
 const CALLER = 'callerCandidates'
 const CALLEE = 'calleeCandidates'
 
-describe.sequential('FBAdapter — full integration suite (real Firestore)', () => {
+const integrationEnabled = process.env.FIREBASE_INTEGRATION === '1'
+const describeIntegration = integrationEnabled ? describe.sequential : describe.sequential.skip
+
+describeIntegration('FBAdapter — full integration suite (real Firestore)', () => {
     let db: Firestore
     let auth: Auth
     let uid: string

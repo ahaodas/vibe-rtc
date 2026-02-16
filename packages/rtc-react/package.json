@@ -28,13 +28,14 @@
     "devDependencies": {
         "react": "18.3.1",
         "vitest": "^4.0.4",
-        "@types/react": "^18.3.26"
+        "@types/react": "^18.3.26",
+        "jsdom": "^26.1.0"
     },
     "scripts": {
         "build": "tsup",
         "build:watch": "tsup --watch",
         "clean": "rm -rf dist",
-        "test": "vitest run",
+        "test": "vitest run --passWithNoTests",
         "test:watch": "vitest"
     }
 }

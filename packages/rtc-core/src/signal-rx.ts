@@ -9,7 +9,7 @@ type SignalIce = RTCIceCandidateInit & { epoch?: number }
 export interface SignalDB {
     // управление комнатой
     createRoom(): Promise<string>
-    joinRoom(id: string, role?: 'caller' | 'callee'): Promise<void>
+    joinRoom(id: string, role?: 'caller' | 'callee'): void | Promise<void>
     endRoom(): Promise<void>
 
     // offer/answer

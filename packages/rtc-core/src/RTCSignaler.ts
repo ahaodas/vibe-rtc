@@ -5,6 +5,7 @@
 import type { SignalDB, OfferSDP, AnswerSDP } from './types'
 import { Subscription } from 'rxjs'
 import { createSignalStreams } from './signal-rx'
+import { RTCError, RTCErrorCode, toRTCError, type RTCErrorPhase } from './errors'
 
 let __seq = 0
 const now = () =>
@@ -61,7 +62,7 @@ export interface RTCSignalerOptions {
     onFastClose?: () => void
     onReliableOpen?: () => void
     onReliableClose?: () => void
-    onError?: (err: unknown) => void
+    onError?: (err: RTCError) => void
     onDebug?: (state: DebugState) => void // NEW: хук для UI
 }
 
@@ -135,7 +136,7 @@ export class RTCSignaler {
     private onFastClose: () => void
     private onReliableOpen: () => void
     private onReliableClose: () => void
-    private onError: (e: unknown) => void
+    private onError: (e: RTCError) => void
     private onDebug: (d: DebugState) => void
 
     private dbg
@@ -180,7 +181,7 @@ export class RTCSignaler {
         this.onReliableOpen = opts.onReliableOpen ?? (() => {})
         this.onReliableClose = opts.onReliableClose ?? (() => {})
         this.onError = (e) => {
-            this.lastErrorText = String(e)
+            this.lastErrorText = `${e.code}: ${e.message}`
             ;(opts.onError ?? ((ee) => console.error('[RTCSignaler]', ee)))(e)
             this.emitDebug('error')
         }
@@ -194,12 +195,28 @@ export class RTCSignaler {
     // ————————————————————————————————————————————————————————————————
 
     async createRoom(): Promise<string> {
-        const id = await this.signalDb.createRoom()
+        let id: string
+        try {
+            id = await this.signalDb.createRoom()
+        } catch (e) {
+            throw this.raiseError(e, RTCErrorCode.DB_UNAVAILABLE, 'room', true, 'createRoom failed')
+        }
         this.roomId = id
         try {
             const room = await this.signalDb.getRoom()
             this.signalingEpoch = room?.epoch ?? 0
-        } catch {}
+        } catch (e) {
+            this.onError(
+                this.raiseError(
+                    e,
+                    RTCErrorCode.DB_UNAVAILABLE,
+                    'room',
+                    true,
+                    'createRoom: failed to sync room epoch',
+                    false,
+                ),
+            )
+        }
         this.dbg.p('createRoom -> ' + id)
         this.emitDebug('createRoom')
         return id
@@ -208,19 +225,40 @@ export class RTCSignaler {
     async joinRoom(id: string): Promise<void> {
         this.roomId = id
         this.dbg.p('joinRoom -> ' + id)
-        await this.signalDb.joinRoom(id, this.role)
+        try {
+            await this.signalDb.joinRoom(id, this.role)
+        } catch (e) {
+            throw this.raiseError(e, RTCErrorCode.DB_UNAVAILABLE, 'room', true, 'joinRoom failed')
+        }
         try {
             const room = await this.signalDb.getRoom()
             this.signalingEpoch = room?.epoch ?? 0
-        } catch {
+        } catch (e) {
             this.signalingEpoch = 0
+            this.onError(
+                this.raiseError(
+                    e,
+                    RTCErrorCode.DB_UNAVAILABLE,
+                    'room',
+                    true,
+                    'joinRoom: failed to load room snapshot',
+                    false,
+                ),
+            )
         }
         this.phase = 'subscribed'
         this.emitDebug('joinRoom')
     }
 
     async connect(): Promise<void> {
-        if (!this.roomId) throw new Error('Room not selected')
+        if (!this.roomId) {
+            throw this.raiseError(
+                new Error('Room not selected'),
+                RTCErrorCode.ROOM_NOT_SELECTED,
+                'room',
+                false,
+            )
+        }
         if (this.connectedOrSubbed) {
             this.dbg.p('connect() skipped (already connected/subscribed)')
             return
@@ -246,7 +284,9 @@ export class RTCSignaler {
                     }
                     await this?.pc?.addIceCandidate(c)
                 } catch (e) {
-                    this.onError(e)
+                    this.onError(
+                        this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'signaling', true, undefined, false),
+                    )
                 }
             }),
         )
@@ -324,7 +364,16 @@ export class RTCSignaler {
                         try {
                             await this.pc?.addIceCandidate(c)
                         } catch (e) {
-                            this.onError(e)
+                            this.onError(
+                                this.raiseError(
+                                    e,
+                                    RTCErrorCode.SIGNALING_FAILED,
+                                    'signaling',
+                                    true,
+                                    undefined,
+                                    false,
+                                ),
+                            )
                         }
                     }
 
@@ -351,7 +400,9 @@ export class RTCSignaler {
                     await this.streams.setAnswer({ ...(answer as AnswerSDP), epoch: this.signalingEpoch })
                     this.dbg.p('answer published')
                 } catch (e) {
-                    this.onError(e)
+                    this.onError(
+                        this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'negotiation', true, undefined, false),
+                    )
                 } finally {
                     this.answering = false
                 }
@@ -413,11 +464,22 @@ export class RTCSignaler {
                         try {
                             await this.pc.addIceCandidate(c)
                         } catch (e) {
-                            this.onError(e)
+                            this.onError(
+                                this.raiseError(
+                                    e,
+                                    RTCErrorCode.SIGNALING_FAILED,
+                                    'signaling',
+                                    true,
+                                    undefined,
+                                    false,
+                                ),
+                            )
                         }
                     }
                 } catch (e) {
-                    this.onError(e)
+                    this.onError(
+                        this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'negotiation', true, undefined, false),
+                    )
                 }
             }),
         )
@@ -448,7 +510,14 @@ export class RTCSignaler {
     }
 
     async reconnectSoft(): Promise<void> {
-        if (!this.roomId) throw new Error('Room not selected')
+        if (!this.roomId) {
+            throw this.raiseError(
+                new Error('Room not selected'),
+                RTCErrorCode.ROOM_NOT_SELECTED,
+                'reconnect',
+                false,
+            )
+        }
         if (!this?.pc) return
         if (this.makingOffer || this.pc.signalingState !== 'stable') {
             this.dbg.p('reconnectSoft skipped (makingOffer or !stable)')
@@ -456,22 +525,38 @@ export class RTCSignaler {
         }
         this.phase = 'soft-reconnect'
         this.emitDebug('soft-reconnect')
-
-        const offer = await this.pc.createOffer({ iceRestart: true })
-        this.lastLocalOfferSdp = offer.sdp ?? null
-        this.dbg.p('SLD(offer,iceRestart) start', { sdp: sdpHash(offer.sdp) })
-        await this.pc.setLocalDescription(offer)
-        const epochChanged = await this.refreshSignalingEpoch()
-        if (epochChanged) {
-            this.dbg.p('skip offer(iceRestart) publish after epoch sync')
-            return
+        try {
+            const offer = await this.pc.createOffer({ iceRestart: true })
+            this.lastLocalOfferSdp = offer.sdp ?? null
+            this.dbg.p('SLD(offer,iceRestart) start', { sdp: sdpHash(offer.sdp) })
+            await this.pc.setLocalDescription(offer)
+            const epochChanged = await this.refreshSignalingEpoch()
+            if (epochChanged) {
+                this.dbg.p('skip offer(iceRestart) publish after epoch sync')
+                return
+            }
+            await this.streams.setOffer({ ...(offer as OfferSDP), epoch: this.signalingEpoch })
+            this.dbg.p('offer(iceRestart) published')
+        } catch (e) {
+            throw this.raiseError(
+                e,
+                RTCErrorCode.SIGNALING_FAILED,
+                'reconnect',
+                true,
+                'reconnectSoft failed',
+            )
         }
-        await this.streams.setOffer({ ...(offer as OfferSDP), epoch: this.signalingEpoch })
-        this.dbg.p('offer(iceRestart) published')
     }
 
     async reconnectHard(opts: { awaitReadyMs?: number } = {}) {
-        if (!this.roomId) throw new Error('Room not selected')
+        if (!this.roomId) {
+            throw this.raiseError(
+                new Error('Room not selected'),
+                RTCErrorCode.ROOM_NOT_SELECTED,
+                'reconnect',
+                false,
+            )
+        }
         this.phase = 'hard-reconnect'
         this.emitDebug('hard-reconnect start')
 
@@ -527,7 +612,9 @@ export class RTCSignaler {
         await this.hangup()
         try {
             await this.signalDb.endRoom()
-        } catch {}
+        } catch (e) {
+            throw this.raiseError(e, RTCErrorCode.DB_UNAVAILABLE, 'room', true, 'endRoom failed')
+        }
         this.roomId = null
         this.emitDebug('endRoom')
     }
@@ -572,9 +659,9 @@ export class RTCSignaler {
             this.onReliableClose = () => {}
         }
     }
-    setErrorHandler(cb: (e: unknown) => void): Unsub {
+    setErrorHandler(cb: (e: RTCError) => void): Unsub {
         this.onError = (e) => {
-            this.lastErrorText = String(e)
+            this.lastErrorText = `${e.code}: ${e.message}`
             cb(e)
             this.emitDebug('error')
         }
@@ -671,7 +758,11 @@ export class RTCSignaler {
                 const ice: RTCIceCandidate = ev.candidate
                 if (this.role === 'caller') await this.streams.addCallerIceCandidate(ice)
                 else await this.streams.addCalleeIceCandidate(ice)
-            } catch (e) { this.onError(e) }
+            } catch (e) {
+                this.onError(
+                    this.raiseError(e, RTCErrorCode.DB_UNAVAILABLE, 'signaling', true, undefined, false),
+                )
+            }
         }
 
         this.pc.onnegotiationneeded = async () => {
@@ -699,7 +790,9 @@ export class RTCSignaler {
                 this.dbg.p('offer published')
             } catch (e) {
                 this.dbg.pe('negotiation error', e)
-                this.onError(e)
+                this.onError(
+                    this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'negotiation', true, undefined, false),
+                )
             } finally {
                 this.makingOffer = false
                 this.emitDebug('negotiation-done')
@@ -807,7 +900,15 @@ export class RTCSignaler {
                 return
             await sleep(100)
         }
-        throw new Error('waitReady timeout: ' + JSON.stringify(this.inspect()))
+        throw this.raiseError(
+            new Error('waitReady timeout'),
+            RTCErrorCode.WAIT_READY_TIMEOUT,
+            'transport',
+            true,
+            'waitReady timeout',
+            false,
+            { inspect: this.inspect(), timeoutMs },
+        )
     }
 
     inspect() {
@@ -904,7 +1005,9 @@ export class RTCSignaler {
             await this.reconnectHard({ awaitReadyMs: 15000 })
         } catch (e) {
             this.dbg.pe('tryHardNow failed', e)
-            this.onError(e)
+            this.onError(
+                this.raiseError(e, RTCErrorCode.SIGNALING_FAILED, 'reconnect', true, undefined, false),
+            )
         }
     }
 
@@ -940,6 +1043,20 @@ export class RTCSignaler {
             // best-effort sync
         }
         return this.signalingEpoch !== before
+    }
+
+    private raiseError(
+        err: unknown,
+        fallbackCode: RTCErrorCode,
+        phase: RTCErrorPhase,
+        retriable: boolean,
+        message?: string,
+        rethrow = true,
+        details?: Record<string, unknown>,
+    ): RTCError {
+        const wrapped = toRTCError(err, { fallbackCode, phase, retriable, message, details })
+        if (rethrow) return wrapped
+        return wrapped
     }
 
     private emitDebug(lastEvent?: string) {
