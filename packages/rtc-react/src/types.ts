@@ -1,4 +1,4 @@
-import { DebugState, RTCSignaler, SignalDB } from '@vibe-rtc/rtc-core'
+import type { DebugState, RTCSignaler, SignalDB } from '@vibe-rtc/rtc-core'
 import type React from 'react'
 
 export type VibeRTCStatus =

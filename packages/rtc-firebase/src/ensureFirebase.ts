@@ -1,21 +1,21 @@
 import {
-    initializeApp,
-    getApps,
-    getApp,
     type FirebaseApp,
     type FirebaseOptions,
+    getApp,
+    getApps,
+    initializeApp,
 } from 'firebase/app'
-import { getFirestore, type Firestore } from 'firebase/firestore'
 import {
+    type Auth,
+    browserLocalPersistence,
     getAuth,
+    getIdToken,
     initializeAuth,
     inMemoryPersistence,
-    browserLocalPersistence,
-    signInAnonymously,
     onAuthStateChanged,
-    getIdToken,
-    type Auth,
+    signInAnonymously,
 } from 'firebase/auth'
+import { type Firestore, getFirestore } from 'firebase/firestore'
 
 async function waitForUser(auth: Auth): Promise<string> {
     if (auth.currentUser) {

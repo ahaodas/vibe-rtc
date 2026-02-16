@@ -1,2 +1,2 @@
-export { VibeRTCProvider, useVibeRTC } from './context'
+export { useVibeRTC, VibeRTCProvider } from './context'
 export * from './types'

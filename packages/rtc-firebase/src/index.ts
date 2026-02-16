@@ -1,3 +1,3 @@
-export { FBAdapter } from './FBAdapter'
+export { cfgFromProcessEnv, type LoadNodeEnvOptions, loadFirebaseConfig } from './config'
 export { ensureFirebase } from './ensureFirebase'
-export { loadFirebaseConfig, cfgFromProcessEnv, type LoadNodeEnvOptions } from './config'
+export { FBAdapter } from './FBAdapter'

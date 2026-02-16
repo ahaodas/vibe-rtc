@@ -1,10 +1,10 @@
-import * as React from "react";
-import {useEffect, useState} from "react";
-import { useParams, Link } from "react-router-dom";
-import { useVibeRTC } from "@vibe-rtc/rtc-react";
+import { useVibeRTC } from '@vibe-rtc/rtc-react'
+import * as React from 'react'
+import { useEffect, useState } from 'react'
+import { Link, useParams } from 'react-router-dom'
 
 export default function CallerRoomPage() {
-    const { roomId } = useParams<{ roomId: string }>();
+    const { roomId } = useParams<{ roomId: string }>()
     const [messages, setMessages] = useState<string[]>([])
     const {
         status,
@@ -14,37 +14,35 @@ export default function CallerRoomPage() {
         sendReliable,
         endRoom,
         lastFastMessage,
-        lastReliableMessage
-    } = useVibeRTC();
+        lastReliableMessage,
+    } = useVibeRTC()
 
     useEffect(() => {
-        if (!roomId) return;
-        let cancelled = false;
-        (async () => {
+        if (!roomId) return
+        let cancelled = false
+        ;(async () => {
             try {
-                await attachAsCaller(roomId);
+                await attachAsCaller(roomId)
             } catch (e) {
-                console.error(e);
+                console.error(e)
             }
             if (!cancelled) {
                 // noop
             }
-        })();
+        })()
         return () => {
-            cancelled = true;
-        };
-    }, [roomId, attachAsCaller]);
-
+            cancelled = true
+        }
+    }, [roomId, attachAsCaller])
 
     useEffect(() => {
-        setMessages(x =>  ([`Fast: ${ JSON.stringify(lastFastMessage)}`, ...x]))
-    }, [lastFastMessage]);
+        setMessages((x) => [`Fast: ${JSON.stringify(lastFastMessage)}`, ...x])
+    }, [lastFastMessage])
     useEffect(() => {
-        setMessages(x =>  ([`Reliable: ${JSON.stringify(lastReliableMessage)}`, ...x]))
-    }, [lastReliableMessage]);
+        setMessages((x) => [`Reliable: ${JSON.stringify(lastReliableMessage)}`, ...x])
+    }, [lastReliableMessage])
 
-
-    const calleeLink = roomId ? `/callee/${roomId}` : "";
+    const calleeLink = roomId ? `/callee/${roomId}` : ''
 
     return (
         <div style={{ padding: 16 }}>
@@ -54,27 +52,31 @@ export default function CallerRoomPage() {
                 Status: <b>{status}</b>
             </div>
             {lastError && (
-                <div style={{ color: "crimson", marginBottom: 8 }}>
-                    {lastError.message}
-                </div>
+                <div style={{ color: 'crimson', marginBottom: 8 }}>{lastError.message}</div>
             )}
             {status === 'connected' && (
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                <button onClick={() => sendFast("caller-fast")}>Send fast</button>
-                <button onClick={() => sendReliable("caller-rel")}>Send reliable</button>
-                <button onClick={() => endRoom()}>End room</button>
-            </div>
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                    <button onClick={() => sendFast('caller-fast')}>Send fast</button>
+                    <button onClick={() => sendReliable('caller-rel')}>Send reliable</button>
+                    <button onClick={() => endRoom()}>End room</button>
+                </div>
             )}
 
             <div style={{ marginTop: 12 }}>
                 Share this link with callee:&nbsp;
                 {roomId ? (
-                    <Link target={'_blank'} to={`/callee/${roomId}`}>{calleeLink}</Link>
+                    <Link target={'_blank'} to={`/callee/${roomId}`}>
+                        {calleeLink}
+                    </Link>
                 ) : (
                     <em>no room</em>
                 )}
             </div>
-            <ul>{messages.map((m, i) => <li key={i}>{m}</li>)}</ul>
+            <ul>
+                {messages.map((m, i) => (
+                    <li key={i}>{m}</li>
+                ))}
+            </ul>
         </div>
-    );
+    )
 }

@@ -1,30 +1,25 @@
 // FBAdapter.ts
+
+import type { AnswerSDP, CandidateDoc, OfferSDP, RoomDoc, SignalDB } from '@vibe-rtc/rtc-core'
+import type { Auth } from 'firebase/auth'
 import {
-    type Firestore,
-    collection,
-    doc,
-    type DocumentReference,
     type CollectionReference,
-    setDoc,
-    updateDoc,
+    collection,
+    type DocumentReference,
+    type DocumentSnapshot,
+    deleteDoc,
+    doc,
+    type Firestore,
     getDoc,
     getDocFromServer,
+    getDocs,
     increment,
     onSnapshot,
-    getDocs,
-    deleteDoc,
-    serverTimestamp,
     runTransaction,
+    serverTimestamp,
+    setDoc,
+    updateDoc,
 } from 'firebase/firestore'
-import type { Auth } from 'firebase/auth'
-
-import {
-    type SignalDB,
-    type OfferSDP,
-    type AnswerSDP,
-    type RoomDoc,
-    type CandidateDoc,
-} from '@vibe-rtc/rtc-core'
 
 const ROOMS = 'rooms'
 const CALLER_CANDIDATES = 'callerCandidates'
@@ -178,7 +173,7 @@ export class FBAdapter implements SignalDB {
 
     async getRoom(): Promise<RoomDoc | null> {
         if (!this.roomRef) throw new Error('Room not selected')
-        let snap
+        let snap: DocumentSnapshot<RoomDoc>
         try {
             snap = await getDocFromServer(this.roomRef)
         } catch {
@@ -359,16 +354,23 @@ export class FBAdapter implements SignalDB {
         if (!this.callerCol) throw new Error('Room not selected')
         const json = sanitize(ice.toJSON())
         const ref = doc(this.callerCol, candidateDocId(json))
-        await setDoc(ref, { ...json, epoch: this.roomEpoch, createdAt: serverTimestamp() }, { merge: true })
+        await setDoc(
+            ref,
+            { ...json, epoch: this.roomEpoch, createdAt: serverTimestamp() },
+            { merge: true },
+        )
     }
 
     async addCalleeIceCandidate(ice: RTCIceCandidate): Promise<void> {
         if (!this.calleeCol) throw new Error('Room not selected')
         const json = sanitize(ice.toJSON())
         const ref = doc(this.calleeCol, candidateDocId(json))
-        await setDoc(ref, { ...json, epoch: this.roomEpoch, createdAt: serverTimestamp() }, { merge: true })
+        await setDoc(
+            ref,
+            { ...json, epoch: this.roomEpoch, createdAt: serverTimestamp() },
+            { merge: true },
+        )
     }
-
 
     subscribeOnCallerIceCandidate(cb: (ice: RTCIceCandidateInit) => void): () => void {
         if (!this.callerCol) return () => {}

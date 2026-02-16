@@ -1,7 +1,7 @@
 // signal-rx.ts
 // Тонкая RxJS-обёртка над вашим существующим SignalDB (без переписывания адаптера)
 
-import { Observable, shareReplay, map, distinctUntilChanged } from 'rxjs'
+import { distinctUntilChanged, map, Observable, shareReplay } from 'rxjs'
 
 type SignalDescription = RTCSessionDescriptionInit & { epoch?: number }
 type SignalIce = RTCIceCandidateInit & { epoch?: number }
@@ -48,7 +48,9 @@ function fromSubscribe<T>(sub: (cb: (v: T) => void) => () => void): Observable<T
     return new Observable<T>((subscriber) => {
         const unsub = sub((v) => subscriber.next(v))
         return () => {
-            try { unsub?.() } catch {}
+            try {
+                unsub?.()
+            } catch {}
             subscriber.complete()
         }
     })
@@ -61,14 +63,26 @@ export function createSignalStreams(db: SignalDB) {
 
     // дедуп по SDP (иногда Firestore может прислать повтор)
     const offer$ = offerRaw$.pipe(
-        map((d) => ({ ...d, __h: `${d.epoch ?? -1}:${sdpHash(d.sdp ?? null)}` } as SignalDescription & { __h: string })),
+        map(
+            (d) =>
+                ({
+                    ...d,
+                    __h: `${d.epoch ?? -1}:${sdpHash(d.sdp ?? null)}`,
+                }) as SignalDescription & { __h: string },
+        ),
         distinctUntilChanged((a, b) => a.__h === b.__h),
         map(({ __h, ...rest }) => rest),
         shareReplay({ bufferSize: 1, refCount: true }),
     )
 
     const answer$ = answerRaw$.pipe(
-        map((d) => ({ ...d, __h: `${d.epoch ?? -1}:${sdpHash(d.sdp ?? null)}` } as SignalDescription & { __h: string })),
+        map(
+            (d) =>
+                ({
+                    ...d,
+                    __h: `${d.epoch ?? -1}:${sdpHash(d.sdp ?? null)}`,
+                }) as SignalDescription & { __h: string },
+        ),
         distinctUntilChanged((a, b) => a.__h === b.__h),
         map(({ __h, ...rest }) => rest),
         shareReplay({ bufferSize: 1, refCount: true }),

@@ -1,7 +1,7 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { doc, getDoc, getDocs, collection, type Firestore } from 'firebase/firestore'
-import { type Auth } from 'firebase/auth'
-import { type OfferSDP, type AnswerSDP } from '@vibe-rtc/rtc-core'
+import type { AnswerSDP, OfferSDP } from '@vibe-rtc/rtc-core'
+import type { Auth } from 'firebase/auth'
+import { collection, doc, type Firestore, getDoc, getDocs } from 'firebase/firestore'
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { ensureFirebase, FBAdapter, loadFirebaseConfig } from '../../src'
 
 export const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
