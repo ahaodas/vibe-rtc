@@ -2,7 +2,8 @@ import type { AnswerSDP, OfferSDP } from '@vibe-rtc/rtc-core'
 import type { Auth } from 'firebase/auth'
 import { collection, doc, type Firestore, getDoc, getDocs } from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { ensureFirebase, FBAdapter, loadFirebaseConfig } from '../../src'
+import { ensureFirebase, FBAdapter } from '../../src'
+import { loadFirebaseConfig } from '../../src/node'
 
 export const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
 class TestRTCIceCandidate implements RTCIceCandidate {

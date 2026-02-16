@@ -9,6 +9,15 @@ type LogLine = {
 
 const APP_BASE_PATH = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '')
 const toBasePath = (path: string) => `${APP_BASE_PATH}${path.startsWith('/') ? path : `/${path}`}`
+const readHashPath = () => {
+    const raw = window.location.hash.replace(/^#/, '')
+    if (!raw) return '/'
+    return raw.startsWith('/') ? raw : `/${raw}`
+}
+const setHashPath = (path: string) => {
+    const normalized = path.startsWith('/') ? path : `/${path}`
+    window.location.hash = normalized
+}
 
 export function App() {
     const rtc = useVibeRTC()
@@ -16,8 +25,15 @@ export function App() {
     const [reliableText, setReliableText] = useState('ping-reliable')
     const [logs, setLogs] = useState<LogLine[]>([])
     const autoRouteHandledRef = useRef<string | null>(null)
+    const [hashPath, setHashPathState] = useState(readHashPath)
 
-    const match = window.location.pathname.match(/\/attach\/(caller|callee)\/([^/]+)$/)
+    useEffect(() => {
+        const onHashChange = () => setHashPathState(readHashPath())
+        window.addEventListener('hashchange', onHashChange)
+        return () => window.removeEventListener('hashchange', onHashChange)
+    }, [])
+
+    const match = hashPath.match(/\/attach\/(caller|callee)\/([^/]+)$/)
     const routeRole = match?.[1] as 'caller' | 'callee' | undefined
     const routeRoomId = match?.[2] ? decodeURIComponent(match[2]) : ''
     const mode: 'initial' | 'caller' | 'callee' = routeRole ?? 'initial'
@@ -51,13 +67,17 @@ export function App() {
 
     const callerUrl = useMemo(() => {
         if (!rtc.roomId) return ''
-        return `${window.location.origin}${toBasePath(`/attach/caller/${rtc.roomId}`)}`
+        return `${window.location.origin}${toBasePath('/')}#/attach/caller/${rtc.roomId}`
     }, [rtc.roomId])
 
     const calleeUrl = useMemo(() => {
         if (!rtc.roomId) return ''
-        return `${window.location.origin}${toBasePath(`/attach/callee/${rtc.roomId}`)}`
+        return `${window.location.origin}${toBasePath('/')}#/attach/callee/${rtc.roomId}`
     }, [rtc.roomId])
+    const calleeQrUrl = useMemo(() => {
+        if (!calleeUrl) return ''
+        return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(calleeUrl)}`
+    }, [calleeUrl])
 
     useEffect(() => {
         if (!rtc.lastFastMessage) return
@@ -111,8 +131,7 @@ export function App() {
 
     const createRoom = async () => {
         const roomId = await rtc.createChannel()
-        const nextPath = toBasePath(`/attach/caller/${encodeURIComponent(roomId)}`)
-        window.history.replaceState({}, '', nextPath)
+        setHashPath(`/attach/caller/${encodeURIComponent(roomId)}`)
         autoRouteHandledRef.current = `caller:${roomId}`
     }
 
@@ -125,7 +144,7 @@ export function App() {
     const endRoomAndReturnInitial = async () => {
         await rtc.endRoom()
         autoRouteHandledRef.current = null
-        window.history.replaceState({}, '', toBasePath('/'))
+        setHashPath('/')
     }
 
     return (
@@ -232,11 +251,19 @@ export function App() {
                         </div>
 
                         {mode === 'caller' && (
-                            <div className="linkbox">
-                                <a href={calleeUrl} target="_blank" rel="noreferrer">
-                                    {calleeUrl}
-                                </a>
-                            </div>
+                            <>
+                                <div className="linkbox">
+                                    <a href={calleeUrl} target="_blank" rel="noreferrer">
+                                        {calleeUrl}
+                                    </a>
+                                </div>
+                                {calleeQrUrl && (
+                                    <div className="qrbox">
+                                        <img src={calleeQrUrl} alt="QR code for callee link" />
+                                        <p>Scan to open callee screen on another device.</p>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </>
                 )}

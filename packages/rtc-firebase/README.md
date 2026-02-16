@@ -12,7 +12,7 @@ pnpm add @vibe-rtc/rtc-firebase
 
 - `FBAdapter`: `SignalDB` implementation on Firestore
 - `ensureFirebase(config)`: initializes app/auth/firestore and signs in anonymously
-- `loadFirebaseConfig`, `cfgFromProcessEnv`: env-based config helpers
+- `@vibe-rtc/rtc-firebase/node`: Node-only env config helpers (`loadFirebaseConfig`, `cfgFromProcessEnv`)
 
 ## Quick Example
 
@@ -32,7 +32,7 @@ const rtc = new RTCSignaler('caller', signalDb)
 
 ## Environment Variables
 
-For `cfgFromProcessEnv` / `loadFirebaseConfig` default prefix `VITE_`:
+For `cfgFromProcessEnv` / `loadFirebaseConfig` (from `@vibe-rtc/rtc-firebase/node`) default prefix `VITE_`:
 
 - `VITE_FIREBASE_API_KEY`
 - `VITE_FIREBASE_PROJECT_ID`

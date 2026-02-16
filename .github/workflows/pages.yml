@@ -19,6 +19,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
 
     steps:
       - name: Checkout
@@ -37,13 +39,52 @@ jobs:
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate Firebase env
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY || vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID || vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID || vars.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN || vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_TURN_URLS: ${{ secrets.VITE_TURN_URLS || vars.VITE_TURN_URLS }}
+          VITE_TURN_USERNAME: ${{ secrets.VITE_TURN_USERNAME || vars.VITE_TURN_USERNAME }}
+          VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL || vars.VITE_TURN_CREDENTIAL }}
+          VITE_METERED_USER: ${{ secrets.VITE_METERED_USER || vars.VITE_METERED_USER }}
+          VITE_METERED_CREDENTIAL: ${{ secrets.VITE_METERED_CREDENTIAL || vars.VITE_METERED_CREDENTIAL }}
+        run: |
+          test -n "$VITE_FIREBASE_API_KEY" || (echo "Missing VITE_FIREBASE_API_KEY"; exit 1)
+          test -n "$VITE_FIREBASE_PROJECT_ID" || (echo "Missing VITE_FIREBASE_PROJECT_ID"; exit 1)
+          test -n "$VITE_FIREBASE_APP_ID" || (echo "Missing VITE_FIREBASE_APP_ID"; exit 1)
+          if [ -n "$VITE_TURN_USERNAME" ] && [ -z "$VITE_TURN_CREDENTIAL" ]; then
+            echo "Missing VITE_TURN_CREDENTIAL for provided VITE_TURN_USERNAME"; exit 1
+          fi
+          if [ -n "$VITE_TURN_CREDENTIAL" ] && [ -z "$VITE_TURN_USERNAME" ]; then
+            echo "Missing VITE_TURN_USERNAME for provided VITE_TURN_CREDENTIAL"; exit 1
+          fi
+          if [ -n "$VITE_METERED_USER" ] && [ -z "$VITE_METERED_CREDENTIAL" ]; then
+            echo "Missing VITE_METERED_CREDENTIAL for provided VITE_METERED_USER"; exit 1
+          fi
+          if [ -n "$VITE_METERED_CREDENTIAL" ] && [ -z "$VITE_METERED_USER" ]; then
+            echo "Missing VITE_METERED_USER for provided VITE_METERED_CREDENTIAL"; exit 1
+          fi
+
       - name: Build dependencies and demo
         env:
           VITE_BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY || vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID || vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID || vars.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN || vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_TURN_URLS: ${{ secrets.VITE_TURN_URLS || vars.VITE_TURN_URLS }}
+          VITE_TURN_USERNAME: ${{ secrets.VITE_TURN_USERNAME || vars.VITE_TURN_USERNAME }}
+          VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL || vars.VITE_TURN_CREDENTIAL }}
+          VITE_METERED_USER: ${{ secrets.VITE_METERED_USER || vars.VITE_METERED_USER }}
+          VITE_METERED_CREDENTIAL: ${{ secrets.VITE_METERED_CREDENTIAL || vars.VITE_METERED_CREDENTIAL }}
         run: |
           pnpm --filter @vibe-rtc/rtc-core build
           pnpm --filter @vibe-rtc/rtc-firebase build

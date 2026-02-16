@@ -56,6 +56,21 @@ Required env for demo and tests (via Vite env):
 STUN/TURN (`iceServers`) are configured in code during `RTCSignaler`/`VibeRTCProvider` initialization
 (see `apps/demo/src/main.tsx` and `packages/rtc-e2e/src/main.ts`).
 
+### Demo TURN Provider
+
+Demo supports any TURN provider via Vite variables:
+
+- `VITE_TURN_URLS` (optional, comma-separated TURN/TURNS URLs)
+- `VITE_TURN_USERNAME`
+- `VITE_TURN_CREDENTIAL`
+
+Backward-compatible aliases for Metered are also supported:
+
+- `VITE_METERED_USER`
+- `VITE_METERED_CREDENTIAL`
+
+If no TURN credentials are provided, demo uses STUN-only mode (less reliable on restrictive NAT/firewall networks).
+
 ## Release Workflow
 
 The repo uses Changesets.
