@@ -1,4 +1,4 @@
-export * from './types'
 export * from './errors'
 export * from './ice-config'
-export { RTCSignaler, type DebugState } from './RTCSignaler'
+export { type DebugState, RTCSignaler } from './RTCSignaler'
+export * from './types'

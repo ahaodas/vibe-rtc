@@ -1,5 +1,5 @@
 import { RTCSignaler } from '@vibe-rtc/rtc-core'
-import { FBAdapter, ensureFirebase } from '@vibe-rtc/rtc-firebase'
+import { ensureFirebase, FBAdapter } from '@vibe-rtc/rtc-firebase'
 
 const firebaseConfig = {
     apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -52,9 +52,9 @@ async function make(role: Who) {
 
     const isReady = () => {
         const st = s.inspect()
-        return st.pcState === 'connected' &&
-            st.fast?.state === 'open' &&
-            st.reliable?.state === 'open'
+        return (
+            st.pcState === 'connected' && st.fast?.state === 'open' && st.reliable?.state === 'open'
+        )
     }
 
     async function waitReadyNoAssist(timeoutMs = 15000) {
@@ -86,8 +86,14 @@ async function make(role: Who) {
         sendReliable: (m: string) => s.sendReliable(m),
         reconnectSoft: () => s.reconnectSoft(),
         reconnectHard: (opts?: { awaitReadyMs?: number }) => s.reconnectHard(opts),
-        takeMessages: () => { const out = inbox; inbox = []; return out },
-        flush: () => { inbox = [] },
+        takeMessages: () => {
+            const out = inbox
+            inbox = []
+            return out
+        },
+        flush: () => {
+            inbox = []
+        },
         getState: () => s.inspect(),
 
         endRoom: () => s.endRoom(),

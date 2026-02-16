@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-    DEFAULT_ICE_SERVERS,
-    parseIceServers,
-    withDefaultIceServers,
-} from '../src/ice-config'
+import { DEFAULT_ICE_SERVERS, parseIceServers, withDefaultIceServers } from '../src/ice-config'
 
 describe('ICE config utils', () => {
     it('returns undefined for empty input', () => {

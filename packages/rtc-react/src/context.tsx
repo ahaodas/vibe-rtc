@@ -1,3 +1,5 @@
+import { RTCSignaler, type SignalDB } from '@vibe-rtc/rtc-core'
+import type { PropsWithChildren } from 'react'
 import React, {
     createContext,
     useCallback,
@@ -7,10 +9,8 @@ import React, {
     useReducer,
     useRef,
 } from 'react'
-import type { PropsWithChildren } from 'react'
-import { RTCSignaler, type SignalDB } from '@vibe-rtc/rtc-core'
-import type { VibeRTCContextValue, VibeRTCProviderProps, TimedMessage } from './types'
 import { initialState, mapPcState, normalizeError, reducer } from './state'
+import type { TimedMessage, VibeRTCContextValue, VibeRTCProviderProps } from './types'
 
 const Ctx = createContext<VibeRTCContextValue | null>(null)
 
@@ -407,9 +407,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         <Ctx.Provider value={value}>
             {state.booting &&
                 (props.renderLoading ?? (
-                    <div style={{ padding: 8, opacity: 0.7, fontSize: 12 }}>
-                        Booting signaling…
-                    </div>
+                    <div style={{ padding: 8, opacity: 0.7, fontSize: 12 }}>Booting signaling…</div>
                 ))}
             {state.bootError &&
                 (renderBootError ? (
