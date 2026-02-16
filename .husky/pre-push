@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+set -e
+
+BASE_BRANCH="${HUSKY_BASE_BRANCH:-origin/master}"
+
+if git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+  FROM="$(git merge-base HEAD "$BASE_BRANCH")"
+  SINCE="$BASE_BRANCH"
+else
+  FROM="HEAD~20"
+  SINCE="$FROM"
+fi
+
+pnpm commitlint --from "$FROM" --to HEAD
+pnpm exec biome check --changed --since "$SINCE" --no-errors-on-unmatched
+
+CHANGED_PROJECTS="$(
+  git diff --name-only "$FROM"...HEAD |
+    awk -F/ '($1 == "packages" || $1 == "apps") && $2 != "" { print $1 "/" $2 }' |
+    sort -u
+)"
+
+if [ -n "$CHANGED_PROJECTS" ]; then
+  for project in $CHANGED_PROJECTS; do
+    if [ -f "$project/tsconfig.json" ]; then
+      pnpm exec tsc -p "$project/tsconfig.json" --noEmit
+    fi
+  done
+fi

@@ -1,43 +1,50 @@
 {
-  "name": "vibe-rtc",
-  "version": "0.0.0",
-  "main": "index.js",
-  "private": true,
-  "packageManager": "pnpm@10.21.0",
-  "scripts": {
-    "install:all": "pnpm install -w --frozen-lockfile",
-    "build:libs": "pnpm -r --filter @vibe-rtc/rtc-core --filter @vibe-rtc/rtc-firebase run build",
-    "build:pkg": "pnpm --filter vibe-rtc-common run build",
-    "build:all": "pnpm run build:libs && pnpm run build:pkg",
-    "test:int": "pnpm --filter @vibe-rtc/rtc-firebase run test",
-    "test:e2e": "pnpm --filter @vibe-rtc/rtc-e2e run test",
-    "show-report": "pnpm --filter @vibe-rtc/rtc-e2e run show-report",
-    "format": "biome format --write ./packages/**/* --verbose",
-    "dev:pkgs": "pnpm -w --parallel --filter @vibe-rtc/* run build:watch",
-    "lint": "biome lint",
-    "changeset": "changeset",
-    "changeset:status": "changeset status",
-    "version-packages": "changeset version",
-    "release:tag": "changeset tag",
-    "release": "changeset publish"
-  },
-  "workspaces": {
-    "packages": [
-      "packages/*",
-      "apps/*"
-    ]
-  },
-  "author": "",
-  "license": "ISC",
-  "description": "",
-  "devDependencies": {
-    "@changesets/cli": "^2.29.7",
-    "@biomejs/biome": "2.3.2",
-    "@types/node": "^24.9.1",
-    "tsup": "^8.5.0",
-    "typescript": "^5.9.3"
-  },
-  "dependencies": {
-    "rxjs": "^7.8.2"
-  }
+    "name": "vibe-rtc",
+    "version": "0.0.0",
+    "main": "index.js",
+    "private": true,
+    "packageManager": "pnpm@10.21.0",
+    "scripts": {
+        "prepare": "husky",
+        "install:all": "pnpm install -w --frozen-lockfile",
+        "build:libs": "pnpm -r --filter @vibe-rtc/rtc-core --filter @vibe-rtc/rtc-firebase run build",
+        "build:pkg": "pnpm --filter vibe-rtc-common run build",
+        "build:all": "pnpm run build:libs && pnpm run build:pkg",
+        "test:int": "pnpm --filter @vibe-rtc/rtc-firebase run test",
+        "test:e2e": "pnpm --filter @vibe-rtc/rtc-e2e run test",
+        "show-report": "pnpm --filter @vibe-rtc/rtc-e2e run show-report",
+        "format": "biome format --write ./packages/**/* --verbose",
+        "biome:fix:safe": "biome check --write ./packages ./apps",
+        "dev:pkgs": "pnpm -w --parallel --filter @vibe-rtc/* run build:watch",
+        "lint": "biome lint",
+        "typecheck": "bash -lc 'set -euo pipefail; for f in packages/*/tsconfig.json apps/*/tsconfig.json; do [ -f \"$f\" ] && pnpm exec tsc -p \"$f\" --noEmit; done'",
+        "commitlint": "commitlint --config commitlint.config.cjs",
+        "changeset": "changeset",
+        "changeset:status": "changeset status",
+        "version-packages": "changeset version",
+        "release:tag": "changeset tag",
+        "release": "changeset publish"
+    },
+    "workspaces": {
+        "packages": [
+            "packages/*",
+            "apps/*"
+        ]
+    },
+    "author": "",
+    "license": "ISC",
+    "description": "",
+    "devDependencies": {
+        "@changesets/cli": "^2.29.7",
+        "@biomejs/biome": "2.3.2",
+        "@commitlint/cli": "^19.8.0",
+        "@commitlint/config-conventional": "^19.8.0",
+        "@types/node": "^24.9.1",
+        "husky": "^9.1.7",
+        "tsup": "^8.5.0",
+        "typescript": "^5.9.3"
+    },
+    "dependencies": {
+        "rxjs": "^7.8.2"
+    }
 }
