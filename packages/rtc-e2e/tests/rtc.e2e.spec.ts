@@ -45,7 +45,7 @@ async function assertPingStrict(from: Page, whoFrom: Who, to: Page, expectedText
             .poll(async () => {
                 const got = await to.evaluate(() => (window as any).callee.takeMessages())
                 return got.includes(expectedText)
-            }, { timeout: 5_000, interval: 100 })
+            }, { timeout: 5_000, intervals: [100] })
             .toBe(true)
         return
     }
@@ -55,7 +55,7 @@ async function assertPingStrict(from: Page, whoFrom: Who, to: Page, expectedText
         .poll(async () => {
             const got = await to.evaluate(() => (window as any).caller.takeMessages())
             return got.includes(expectedText)
-        }, { timeout: 5_000, interval: 100 })
+        }, { timeout: 5_000, intervals: [100] })
         .toBe(true)
 }
 
@@ -190,6 +190,8 @@ test.describe('reload recovery (strict no-assist)', () => {
             const elapsedMs = await reloadRoleStrict(pCallee, 'callee', roomId)
             expect(elapsedMs, `callee recovery #${i} must be <= ${RECOVERY_SLA_MS}ms`).toBeLessThanOrEqual(RECOVERY_SLA_MS)
             await waitRoleReadyNoAssist(pCaller, 'caller')
+            await assertStateConnected(pCaller, 'caller')
+            await assertStateConnected(pCallee, 'callee')
             await assertPingStrict(pCaller, 'caller', pCallee, `after-callee-double-${i}`)
         }
 
@@ -197,6 +199,8 @@ test.describe('reload recovery (strict no-assist)', () => {
             const elapsedMs = await reloadRoleStrict(pCaller, 'caller', roomId)
             expect(elapsedMs, `caller recovery #${i} must be <= ${RECOVERY_SLA_MS}ms`).toBeLessThanOrEqual(RECOVERY_SLA_MS)
             await waitRoleReadyNoAssist(pCallee, 'callee')
+            await assertStateConnected(pCaller, 'caller')
+            await assertStateConnected(pCallee, 'callee')
             await assertPingStrict(pCallee, 'callee', pCaller, `after-caller-double-${i}`)
         }
     })
