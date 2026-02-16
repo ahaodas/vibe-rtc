@@ -51,6 +51,8 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     needs: verify
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - name: Checkout
@@ -71,9 +73,15 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Validate npm token
+        run: test -n "$NODE_AUTH_TOKEN" || (echo "Missing NPM_TOKEN secret"; exit 1)
+
+      - name: Configure npm auth
+        run: |
+          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
+          npm whoami
+
       - name: Publish with Changesets
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: pnpm release
 
       - name: Generate GitHub release notes
