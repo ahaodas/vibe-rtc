@@ -1,5 +1,12 @@
 # @vibe-rtc/rtc-firebase
 
+## 0.1.0
+
+### Minor Changes
+
+- 6922554: Split Node-only Firebase config helpers into a dedicated `@vibe-rtc/rtc-firebase/node` export.
+  This keeps the root browser entry free from Node dependencies (`fs`/`dotenv`) and fixes demo runtime on GitHub Pages.
+
 ## 0.0.1
 
 ### Patch Changes
