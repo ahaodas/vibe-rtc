@@ -1,0 +1,57 @@
+name: Deploy Firestore Rules
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - 'packages/rtc-firebase/firestore.rules'
+      - 'packages/rtc-firebase/firestore.indexes.json'
+      - 'packages/rtc-firebase/firebase.json'
+      - '.github/workflows/firestore-rules.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.21.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Validate Firebase env
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          test -n "$FIREBASE_PROJECT_ID" || (echo "Missing repository variable FIREBASE_PROJECT_ID"; exit 1)
+          test -n "$FIREBASE_SERVICE_ACCOUNT" || (echo "Missing repository secret FIREBASE_SERVICE_ACCOUNT"; exit 1)
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Authenticate Firebase
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-service-account.json"
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/firebase-service-account.json" >> "$GITHUB_ENV"
+
+      - name: Deploy firestore rules
+        run: pnpm --filter @vibe-rtc/rtc-firebase run rules:deploy:ci

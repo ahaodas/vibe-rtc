@@ -113,3 +113,8 @@ Deploy rules:
 ```bash
 pnpm --filter @vibe-rtc/rtc-firebase run rules:deploy
 ```
+
+CI deploy is available via `.github/workflows/firestore-rules.yml`.
+Set:
+- Repository variable `FIREBASE_PROJECT_ID`
+- Repository secret `FIREBASE_SERVICE_ACCOUNT` (service account JSON)

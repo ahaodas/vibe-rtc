@@ -61,6 +61,16 @@ pnpm --filter @vibe-rtc/rtc-firebase run rules:deploy:ci
 
 Use `FIREBASE_PROJECT_ID` to target non-default project.
 
+### GitHub Actions Deploy
+
+Repository includes workflow `.github/workflows/firestore-rules.yml`.
+It runs on changes in Firestore rule files and can be started manually.
+
+Required GitHub configuration:
+
+- Repository variable: `FIREBASE_PROJECT_ID`
+- Repository secret: `FIREBASE_SERVICE_ACCOUNT` (JSON of Firebase service account with Firestore rules deploy permissions)
+
 ## Development
 
 ```bash
