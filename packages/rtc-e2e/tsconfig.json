@@ -1,0 +1,12 @@
+{
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "baseUrl": ".",
+        "types": ["vite/client"],
+        "paths": {
+            "@vibe-rtc/rtc-core": ["../rtc-core/src/index.ts"],
+            "@vibe-rtc/rtc-firebase": ["../rtc-firebase/src/index.ts"]
+        }
+    },
+    "include": ["src", "vite.config.ts", "playwright.config.ts", "tests"]
+}
