@@ -48,6 +48,7 @@ Recommendation: keep npm publish manual/explicit (`--publish`) to avoid accident
 
 1. verifies tests/build
 2. publishes packages via `pnpm release` (changesets)
+3. creates/updates GitHub Release for the same tag with a description composed from package `CHANGELOG.md` entries
 
 Required repository secret:
 
