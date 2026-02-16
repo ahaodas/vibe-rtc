@@ -36,6 +36,8 @@ The harness expects Firebase Vite env variables:
 - `VITE_FIREBASE_APP_ID`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 
+STUN servers for E2E are configured directly in `src/main.ts` via `rtcConfiguration`.
+
 ## Notes
 
 - Tests run against real browser context.

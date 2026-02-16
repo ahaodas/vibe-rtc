@@ -51,7 +51,9 @@ Required env for demo and tests (via Vite env):
 - `VITE_FIREBASE_APP_ID`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID` (optional in some setups)
 - `VITE_FIREBASE_AUTH_DOMAIN` (optional if derivable)
-- `VITE_METERED_USER`, `VITE_METERED_CREDENTIAL` (optional TURN)
+
+STUN/TURN (`iceServers`) are configured in code during `RTCSignaler`/`VibeRTCProvider` initialization
+(see `apps/demo/src/main.tsx` and `packages/rtc-e2e/src/main.ts`).
 
 ## Release Workflow
 

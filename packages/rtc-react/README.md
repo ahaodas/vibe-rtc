@@ -27,6 +27,8 @@ import { VibeRTCProvider } from '@vibe-rtc/rtc-react'
 </VibeRTCProvider>
 ```
 
+`rtcConfiguration` is optional. If not provided, `rtc-core` default ICE servers are used.
+
 ## Hook API
 
 ```ts

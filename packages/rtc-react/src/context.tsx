@@ -18,7 +18,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     const {
         signalServer,
         createSignalServer,
-        rtcConfiguration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] },
+        rtcConfiguration,
         renderLoading,
         renderBootError,
         children,

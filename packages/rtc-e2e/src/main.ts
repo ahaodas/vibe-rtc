@@ -12,6 +12,18 @@ const firebaseConfig = {
 
 type Who = 'caller' | 'callee'
 
+const rtcConfiguration: RTCConfiguration = {
+    iceServers: [
+        {
+            urls: [
+                'stun:stun1.l.google.com:19302',
+                'stun:stun2.l.google.com:19302',
+                'stun:stun3.l.google.com:19302',
+            ],
+        },
+    ],
+}
+
 function makeLogger(prefix: string) {
     return {
         msg: (t: string) => console.log(`[${prefix}] msg`, t),
@@ -25,7 +37,9 @@ async function make(role: Who) {
     const signalDb = new FBAdapter(db, auth)
 
     const log = makeLogger(role)
-    const s = new RTCSignaler(role, signalDb, { rtcConfiguration: { iceServers: [] } })
+    const s = new RTCSignaler(role, signalDb, {
+        rtcConfiguration,
+    })
 
     // базовые хэндлеры (чтобы в консоли было видно стейты)
     s.setMessageHandler((t) => log.msg(t))

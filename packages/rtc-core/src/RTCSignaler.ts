@@ -4,6 +4,7 @@
 
 import type { Subscription } from 'rxjs'
 import { RTCError, RTCErrorCode, type RTCErrorPhase, toRTCError } from './errors'
+import { withDefaultIceServers } from './ice-config'
 import { createSignalStreams } from './signal-rx'
 import type { AnswerSDP, OfferSDP, SignalDB } from './types'
 
@@ -181,9 +182,7 @@ export class RTCSignaler {
             enabled: this.debugEnabled,
         })
         this.polite = role === 'callee'
-        this.rtcConfig = opts.rtcConfiguration ?? {
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
-        }
+        this.rtcConfig = withDefaultIceServers(opts.rtcConfiguration)
 
         this.fastLabel = opts.fastLabel ?? 'fast'
         this.reliableLabel = opts.reliableLabel ?? 'reliable'

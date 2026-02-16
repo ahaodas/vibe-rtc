@@ -12,6 +12,7 @@ pnpm add @vibe-rtc/rtc-core
 
 - `RTCSignaler`
 - `RTCError`, `RTCErrorCode`, `toRTCError`, `isRTCError`
+- `withDefaultIceServers`, `DEFAULT_ICE_SERVERS`
 - `SignalDB` interface for custom signaling backends
 
 ## SignalDB Contract
@@ -31,7 +32,11 @@ import { RTCSignaler } from '@vibe-rtc/rtc-core'
 const signaler = new RTCSignaler('caller', signalDb, {
   debug: true,
   waitReadyTimeoutMs: 10000,
-  rtcConfiguration: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] },
+  rtcConfiguration: {
+    iceServers: [
+      { urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+    ],
+  },
 })
 
 const roomId = await signaler.createRoom()
@@ -50,6 +55,8 @@ await signaler.endRoom()
 - `debug`: enables internal console logs (`console.log`/`console.error`).  
   By default logs are enabled only in test runtime.
 - `waitReadyTimeoutMs`: default timeout for `waitReady()` and `reconnectHard()` if no timeout is passed explicitly.
+- `rtcConfiguration`: optional `RTCPeerConnection` config.  
+  If omitted (or if `iceServers` is empty), `rtc-core` injects default STUN servers.
 
 ## Error Handling
 
