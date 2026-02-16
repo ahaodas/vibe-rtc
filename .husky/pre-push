@@ -12,7 +12,6 @@ else
 fi
 
 pnpm commitlint --from "$FROM" --to HEAD
-pnpm exec biome check --changed --since "$SINCE" --no-errors-on-unmatched
 
 CHANGED_PROJECTS="$(
   git diff --name-only "$FROM"...HEAD |

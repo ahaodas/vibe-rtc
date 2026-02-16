@@ -77,7 +77,7 @@ Husky hooks are configured:
 
 - `pre-commit`: Biome safe fixes for staged files.
 - `commit-msg`: Conventional Commit validation via commitlint.
-- `pre-push`: commitlint for pushed range + Biome/typecheck for changed projects.
+- `pre-push`: commitlint for pushed range + typecheck for changed projects.
 
 ## Firebase Rules
 

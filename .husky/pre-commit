@@ -1,4 +1,7 @@
 #!/usr/bin/env sh
 set -e
 
+# Apply safe Biome fixes on staged files before commit.
 pnpm exec biome check --write --staged --no-errors-on-unmatched
+# Validate staged files after fixes.
+pnpm exec biome check --staged --no-errors-on-unmatched
