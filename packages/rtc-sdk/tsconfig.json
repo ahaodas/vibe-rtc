@@ -1,12 +1,12 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@vibe-rtc/rtc-core": ["../rtc-core/src/index.ts"],
-      "@vibe-rtc/rtc-firebase": ["../rtc-firebase/src/index.ts"],
-      "@vibe-rtc/rtc-react": ["../rtc-react/src/index.ts"]
-    }
-  },
-  "include": ["src"]
+    "extends": "../../tsconfig.base.json",
+    "compilerOptions": {
+        "baseUrl": ".",
+        "paths": {
+            "@vibe-rtc/rtc-core": ["../rtc-core/src/index.ts"],
+            "@vibe-rtc/rtc-firebase": ["../rtc-firebase/src/index.ts"],
+            "@vibe-rtc/rtc-react": ["../rtc-react/src/index.ts"]
+        }
+    },
+    "include": ["src"]
 }
