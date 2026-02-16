@@ -1,0 +1,67 @@
+# @vibe-rtc/rtc-react
+
+React integration for `@vibe-rtc/rtc-core`.
+
+Provides `VibeRTCProvider` and `useVibeRTC()` for room/channel lifecycle, messaging, reconnect, and typed state for UI.
+
+## Install
+
+```bash
+pnpm add @vibe-rtc/rtc-react @vibe-rtc/rtc-core
+```
+
+`react` is a peer dependency (`>=18`).
+
+## Provider Setup
+
+You can pass either:
+
+- `signalServer`: ready `SignalDB` instance
+- `createSignalServer`: async factory (provider handles booting/error state)
+
+```tsx
+import { VibeRTCProvider } from '@vibe-rtc/rtc-react'
+
+<VibeRTCProvider createSignalServer={createSignalServer}>
+  <App />
+</VibeRTCProvider>
+```
+
+## Hook API
+
+```ts
+const rtc = useVibeRTC()
+
+await rtc.createChannel()          // caller flow
+await rtc.joinChannel(roomId)      // callee flow
+await rtc.attachAsCaller(roomId)
+await rtc.attachAsCallee(roomId)
+await rtc.attachAuto(roomId, { allowTakeOver: true, staleMs: 60_000 })
+
+await rtc.sendFast('ping')
+await rtc.sendReliable('pong')
+
+await rtc.reconnectSoft()
+await rtc.reconnectHard({ awaitReadyMs: 15000 })
+
+await rtc.disconnect()
+await rtc.endRoom()
+```
+
+## State Model
+
+`useVibeRTC()` returns:
+
+- `status`: `idle | booting | connecting | connected | disconnected | error`
+- `booting`, `bootError`, `lastError`
+- `roomId`
+- `lastFastMessage`, `lastReliableMessage`
+- `messageSeqFast`, `messageSeqReliable`
+- `debugState` (from core signaler)
+
+## Development
+
+```bash
+pnpm --filter @vibe-rtc/rtc-react build
+pnpm --filter @vibe-rtc/rtc-react test
+```
