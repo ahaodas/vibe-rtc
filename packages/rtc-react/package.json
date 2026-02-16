@@ -1,6 +1,6 @@
 {
     "name": "@vibe-rtc/rtc-react",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "description": "React adapter (hook) for vibe-rtc core",
     "type": "module",
     "private": false,
