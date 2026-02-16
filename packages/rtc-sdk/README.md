@@ -10,16 +10,16 @@ pnpm add @vibe-rtc/sdk
 
 ## Usage
 
-Root export (all modules):
+Root export (core + firebase):
 
 ```ts
-import { RTCSignaler, VibeRTCProvider, FBAdapter, ensureFirebase } from '@vibe-rtc/sdk'
+import { RTCSignaler, FBAdapter, ensureFirebase } from '@vibe-rtc/sdk'
 ```
 
 Namespaced exports:
 
 ```ts
-import { rtcCore, rtcReact, rtcFirebase } from '@vibe-rtc/sdk'
+import { rtcCore, rtcFirebase } from '@vibe-rtc/sdk'
 ```
 
 Subpath exports:
@@ -29,3 +29,5 @@ import { RTCSignaler } from '@vibe-rtc/sdk/core'
 import { VibeRTCProvider } from '@vibe-rtc/sdk/react'
 import { FBAdapter } from '@vibe-rtc/sdk/firebase'
 ```
+
+Use subpath imports in apps to avoid pulling unused modules into the bundle.
