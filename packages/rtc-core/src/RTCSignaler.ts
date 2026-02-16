@@ -143,12 +143,13 @@ export class RTCSignaler {
     private softTimer?: number
     private hardTimer?: number
     private softDelayMs = 250
-    private hardDelayMs = 1000
+    private hardDelayMs = 6000
     private softRetries = 0
     private hardRetries = 0
 
     private phase: Phase = 'idle'
     private lastErrorText: string | undefined
+    private signalingEpoch = 0
 
     // --- Новое: RxJS обёртка над сигналингом + список подписок ---
     private streams
@@ -195,6 +196,10 @@ export class RTCSignaler {
     async createRoom(): Promise<string> {
         const id = await this.signalDb.createRoom()
         this.roomId = id
+        try {
+            const room = await this.signalDb.getRoom()
+            this.signalingEpoch = room?.epoch ?? 0
+        } catch {}
         this.dbg.p('createRoom -> ' + id)
         this.emitDebug('createRoom')
         return id
@@ -203,7 +208,13 @@ export class RTCSignaler {
     async joinRoom(id: string): Promise<void> {
         this.roomId = id
         this.dbg.p('joinRoom -> ' + id)
-        await this.signalDb.joinRoom(id)
+        await this.signalDb.joinRoom(id, this.role)
+        try {
+            const room = await this.signalDb.getRoom()
+            this.signalingEpoch = room?.epoch ?? 0
+        } catch {
+            this.signalingEpoch = 0
+        }
         this.phase = 'subscribed'
         this.emitDebug('joinRoom')
     }
@@ -223,6 +234,7 @@ export class RTCSignaler {
         const remoteIce$ = this.role === 'caller' ? this.streams.calleeIce$ : this.streams.callerIce$
         this.rxSubs.push(
             remoteIce$.subscribe(async (c) => {
+                if (!this.acceptEpoch((c as any).epoch)) return
                 this.dbg.p(`remote ICE from ${this.role === 'caller' ? 'callee' : 'caller'}`, {
                     buffered: !this.remoteDescSet,
                     cand: (c.candidate || '').slice(0, 42),
@@ -242,6 +254,7 @@ export class RTCSignaler {
         // --- Rx: входящие offer ---
         this.rxSubs.push(
             this.streams.offer$.subscribe(async (offer) => {
+                if (!this.acceptEpoch((offer as any).epoch)) return
                 const desc = new RTCSessionDescription(offer)
                 const sdp = desc.sdp ?? null
                 this.dbg.p('onOffer()', {
@@ -330,7 +343,12 @@ export class RTCSignaler {
                     this.dbg.p('SLD(answer) start')
                     await this.pc.setLocalDescription(answer)
                     this.dbg.p('SLD(answer) done, publish')
-                    await this.streams.setAnswer(answer as AnswerSDP)
+                    const epochChanged = await this.refreshSignalingEpoch()
+                    if (epochChanged) {
+                        this.dbg.p('skip answer publish after epoch sync')
+                        return
+                    }
+                    await this.streams.setAnswer({ ...(answer as AnswerSDP), epoch: this.signalingEpoch })
                     this.dbg.p('answer published')
                 } catch (e) {
                     this.onError(e)
@@ -343,6 +361,7 @@ export class RTCSignaler {
         // --- Rx: входящие answer ---
         this.rxSubs.push(
             this.streams.answer$.subscribe(async (answer) => {
+                if (!this.acceptEpoch((answer as any).epoch)) return
                 const desc = new RTCSessionDescription(answer)
                 const sdp = desc.sdp ?? null
                 this.dbg.p('onAnswer()', {
@@ -442,7 +461,12 @@ export class RTCSignaler {
         this.lastLocalOfferSdp = offer.sdp ?? null
         this.dbg.p('SLD(offer,iceRestart) start', { sdp: sdpHash(offer.sdp) })
         await this.pc.setLocalDescription(offer)
-        await this.streams.setOffer(offer as OfferSDP)
+        const epochChanged = await this.refreshSignalingEpoch()
+        if (epochChanged) {
+            this.dbg.p('skip offer(iceRestart) publish after epoch sync')
+            return
+        }
+        await this.streams.setOffer({ ...(offer as OfferSDP), epoch: this.signalingEpoch })
         this.dbg.p('offer(iceRestart) published')
     }
 
@@ -592,12 +616,12 @@ export class RTCSignaler {
                 this.softRetries = 0
                 this.hardRetries = 0
                 this.softDelayMs = 250
-                this.hardDelayMs = 1000
+                this.hardDelayMs = 6000
                 this.clearRecoveryTimers()
                 this.emitDebug('connected')
             }
-            if (s === 'disconnected') this.scheduleSoftThenMaybeHard()
-            if (s === 'failed' || s === 'closed') this.tryHardNow()
+            if (this.role === 'caller' && s === 'disconnected') this.scheduleSoftThenMaybeHard()
+            if (this.role === 'caller' && (s === 'failed' || s === 'closed')) this.tryHardNow()
         })
         this.pc.addEventListener('connectionstatechange', () => {
             const st = this.pc!.connectionState
@@ -610,12 +634,12 @@ export class RTCSignaler {
                 this.softRetries = 0
                 this.hardRetries = 0
                 this.softDelayMs = 250
-                this.hardDelayMs = 1000
+                this.hardDelayMs = 6000
                 this.clearRecoveryTimers()
                 this.emitDebug('connected')
             }
-            if (st === 'disconnected') this.scheduleSoftThenMaybeHard()
-            if (st === 'failed' || st === 'closed') this.tryHardNow()
+            if (this.role === 'caller' && st === 'disconnected') this.scheduleSoftThenMaybeHard()
+            if (this.role === 'caller' && (st === 'failed' || st === 'closed')) this.tryHardNow()
         })
 
         if (this.role === 'caller') {
@@ -666,7 +690,12 @@ export class RTCSignaler {
                 this.dbg.p('created offer', { sdp: sdpHash(offer.sdp) })
                 this.dbg.p('SLD(offer) start')
                 await this.pc.setLocalDescription(offer)
-                await this.streams.setOffer(offer as OfferSDP)
+                const epochChanged = await this.refreshSignalingEpoch()
+                if (epochChanged) {
+                    this.dbg.p('skip offer publish after epoch sync')
+                    return
+                }
+                await this.streams.setOffer({ ...(offer as OfferSDP), epoch: this.signalingEpoch })
                 this.dbg.p('offer published')
             } catch (e) {
                 this.dbg.pe('negotiation error', e)
@@ -696,29 +725,14 @@ export class RTCSignaler {
         }
         ch.onclose = () => {
             this.dbg.p(`onclose (${ch.label})`)
-            if (ch.label === this.fastLabel) this.dcFast = undefined
-            if (ch.label === this.reliableLabel) this.dcReliable = undefined
 
             // Игнорируем close от "старых" каналов после смены RTCPeerConnection.
             if (!ownerPc || this.pc !== ownerPc) {
                 this.emitDebug(`dc-close-stale:${ch.label}`)
                 return
             }
-
-            // у caller пересоздаём канал, если pc жив
-            if (this.role === 'caller' && this.pc && this.pc.signalingState !== 'closed') {
-                try {
-                    const recreated = this.pc.createDataChannel(
-                        ch.label,
-                        ch.label === this.reliableLabel ? this.reliableInit : this.fastInit,
-                    )
-                    if (ch.label === this.reliableLabel) this.dcReliable = recreated
-                    else this.dcFast = recreated
-                    this.setupChannel(recreated, ch.label === this.reliableLabel)
-                } catch (e) {
-                    this.dbg.pe('recreate datachannel failed', e)
-                }
-            }
+            if (ch.label === this.fastLabel) this.dcFast = undefined
+            if (ch.label === this.reliableLabel) this.dcReliable = undefined
 
             if (this.isActive()) {
                 const ice = this.pc?.iceConnectionState
@@ -872,7 +886,7 @@ export class RTCSignaler {
             this.tryHardNow().catch(() => {})
             // экспоненциальный бэкофф до 10с
             this.hardRetries++
-            this.hardDelayMs = Math.min(this.hardDelayMs * 2, 10000)
+            this.hardDelayMs = Math.min(this.hardDelayMs * 2, 30000)
             this.emitDebug('hard-reconnect fire')
         }, hardIn) as unknown as number
 
@@ -892,6 +906,40 @@ export class RTCSignaler {
             this.dbg.pe('tryHardNow failed', e)
             this.onError(e)
         }
+    }
+
+    private acceptEpoch(epochLike: unknown): boolean {
+        const epoch =
+            typeof epochLike === 'number' && Number.isFinite(epochLike) ? epochLike : this.signalingEpoch
+        if (epoch < this.signalingEpoch) return false
+        if (epoch > this.signalingEpoch) {
+            this.signalingEpoch = epoch
+            this.lastHandledOfferSdp = null
+            this.lastHandledAnswerSdp = null
+            this.lastSeenOfferSdp = null
+            this.lastSeenAnswerSdp = null
+            this.lastLocalOfferSdp = null
+            this.answering = false
+            this.remoteDescSet = false
+            this.pendingIce.length = 0
+            if (this.pc) {
+                this.cleanupPeerOnly()
+                this.initPeer()
+                this.emitDebug('epoch-advance')
+            }
+        }
+        return true
+    }
+
+    private async refreshSignalingEpoch(): Promise<boolean> {
+        const before = this.signalingEpoch
+        try {
+            const room = await this.signalDb.getRoom()
+            this.acceptEpoch(room?.epoch)
+        } catch {
+            // best-effort sync
+        }
+        return this.signalingEpoch !== before
     }
 
     private emitDebug(lastEvent?: string) {

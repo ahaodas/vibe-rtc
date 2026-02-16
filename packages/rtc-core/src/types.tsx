@@ -1,5 +1,5 @@
-export type OfferSDP = { type: 'offer'; sdp: string }
-export type AnswerSDP = { type: 'answer'; sdp: string }
+export type OfferSDP = { type: 'offer'; sdp: string; epoch?: number }
+export type AnswerSDP = { type: 'answer'; sdp: string; epoch?: number }
 
 export type RoomDoc = {
     creatorUid: string | null
@@ -16,6 +16,7 @@ export type RoomDoc = {
 }
 
 export type CandidateDoc = RTCIceCandidateInit & {
+    epoch?: number
     createdAt?: unknown // serverTimestamp()
 }
 
@@ -24,7 +25,7 @@ export interface SignalDB {
     createRoom(): Promise<string>
 
     /** Подключиться к существующей комнате (и инициализировать внутренние ref/коллекции адаптера) */
-    joinRoom(id: string): void | Promise<void>
+    joinRoom(id: string, role?: 'caller' | 'callee'): void | Promise<void>
 
     /** Считать актуальный снапшот комнаты (нужен провайдеру для auto-attach) */
     getRoom(): Promise<RoomDoc | null>

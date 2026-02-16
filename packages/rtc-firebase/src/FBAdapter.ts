@@ -8,6 +8,8 @@ import {
     setDoc,
     updateDoc,
     getDoc,
+    getDocFromServer,
+    increment,
     onSnapshot,
     getDocs,
     deleteDoc,
@@ -42,20 +44,11 @@ const candidateDocId = (ice: RTCIceCandidateInit): string => {
     return `c_${(h >>> 0).toString(16)}`
 }
 
-// small helper to noop "already exists" errors (in case someone uses create() elsewhere)
-const swallowAlreadyExists = async <T>(p: Promise<T>): Promise<T | void> => {
-    try {
-        return await p
-    } catch (e: any) {
-        if (e?.code === 'already-exists') return
-        throw e
-    }
-}
-
 export class FBAdapter implements SignalDB {
     private roomRef?: DocumentReference<RoomDoc>
     private callerCol?: CollectionReference<CandidateDoc>
     private calleeCol?: CollectionReference<CandidateDoc>
+    private roomEpoch = 0
 
     private unsubs = new Set<() => void>()
 
@@ -94,10 +87,11 @@ export class FBAdapter implements SignalDB {
         this.roomRef = ref as DocumentReference<RoomDoc>
         this.callerCol = collection(ref, CALLER_CANDIDATES) as CollectionReference<CandidateDoc>
         this.calleeCol = collection(ref, CALLEE_CANDIDATES) as CollectionReference<CandidateDoc>
+        this.roomEpoch = 0
         return ref.id
     }
 
-    async joinRoom(id: string): Promise<void> {
+    async joinRoom(id: string, role?: 'caller' | 'callee'): Promise<void> {
         const ref = doc(this.db, ROOMS, id) as DocumentReference<RoomDoc>
         this.roomRef = ref
         this.callerCol = collection(ref, CALLER_CANDIDATES) as CollectionReference<CandidateDoc>
@@ -123,25 +117,76 @@ export class FBAdapter implements SignalDB {
             )
         }
 
-        // Первичное присоединение callee — если слот пуст и не наш же uid в caller
+        // Первичное присоединение в выбранную роль.
+        let joinedAsNewRole = false
         const uid = this.uid
         if (uid) {
             const fresh = await getDoc(ref)
             const data = fresh.data() as RoomDoc | undefined
-            if (data && data.calleeUid == null && data.callerUid && data.callerUid !== uid) {
+            if (role === 'caller' && data && data.callerUid == null) {
+                try {
+                    await updateDoc(ref, { callerUid: uid, updatedAt: serverTimestamp() })
+                    joinedAsNewRole = true
+                } catch {
+                    /* not critical */
+                }
+            }
+            if (role === 'callee' && data && data.calleeUid == null) {
                 try {
                     await updateDoc(ref, { calleeUid: uid, updatedAt: serverTimestamp() })
+                    joinedAsNewRole = true
                 } catch {
                     /* not critical */
                 }
             }
         }
+
+        let latest = (await getDoc(ref)).data() as RoomDoc | undefined
+        this.roomEpoch = latest?.epoch ?? 0
+
+        // Если это re-attach существующего участника (например, reload страницы),
+        // поднимаем epoch и чистим SDP, чтобы обе стороны перешли в новое поколение сигналинга.
+        if (
+            uid &&
+            latest &&
+            role &&
+            role === 'caller' &&
+            !joinedAsNewRole &&
+            (role === 'caller' ? latest.callerUid === uid : latest.calleeUid === uid)
+        ) {
+            const hasActivity =
+                !!latest.offer ||
+                !!latest.answer ||
+                !!latest.callerHeartbeatAt ||
+                !!latest.calleeHeartbeatAt ||
+                (latest.epoch ?? 0) > 0
+            if (!hasActivity) return
+            try {
+                await updateDoc(ref, {
+                    epoch: increment(1),
+                    offer: null,
+                    answer: null,
+                    updatedAt: serverTimestamp(),
+                } as any)
+            } catch {
+                /* best effort */
+            }
+            latest = (await getDoc(ref)).data() as RoomDoc | undefined
+            this.roomEpoch = latest?.epoch ?? this.roomEpoch
+        }
     }
 
     async getRoom(): Promise<RoomDoc | null> {
         if (!this.roomRef) throw new Error('Room not selected')
-        const snap = await getDoc(this.roomRef)
-        return snap.exists() ? (snap.data() as RoomDoc) : null
+        let snap
+        try {
+            snap = await getDocFromServer(this.roomRef)
+        } catch {
+            snap = await getDoc(this.roomRef)
+        }
+        const room = snap.exists() ? (snap.data() as RoomDoc) : null
+        if (room) this.roomEpoch = room.epoch ?? 0
+        return room
     }
 
     async claimCallerIfFree(): Promise<boolean> {
@@ -239,7 +284,14 @@ export class FBAdapter implements SignalDB {
     async setOffer(offer: OfferSDP): Promise<void> {
         if (!this.roomRef) throw new Error('Room not selected')
         // merge:true — никакого create(), избегаем "already exists"
-        await setDoc(this.roomRef, { offer, updatedAt: serverTimestamp() }, { merge: true })
+        await setDoc(
+            this.roomRef,
+            {
+                offer: { ...offer, epoch: this.roomEpoch },
+                updatedAt: serverTimestamp(),
+            },
+            { merge: true },
+        )
     }
 
     async clearOffer(): Promise<void> {
@@ -262,9 +314,14 @@ export class FBAdapter implements SignalDB {
             /* noop */
         }
 
-        await setDoc(this.roomRef, { answer, updatedAt: serverTimestamp() } as Partial<RoomDoc>, {
-            merge: true,
-        })
+        await setDoc(
+            this.roomRef,
+            {
+                answer: { ...answer, epoch: this.roomEpoch },
+                updatedAt: serverTimestamp(),
+            } as Partial<RoomDoc>,
+            { merge: true },
+        )
     }
 
     async clearAnswer(): Promise<void> {
@@ -277,6 +334,7 @@ export class FBAdapter implements SignalDB {
         const unsub = onSnapshot(this.roomRef, async (snap) => {
             if (snap.metadata.hasPendingWrites) return
             const data = snap.data()
+            if (data?.epoch !== undefined) this.roomEpoch = data.epoch
             if (data?.offer) await cb(data.offer as OfferSDP)
         })
         this.trackUnsub(unsub)
@@ -288,6 +346,7 @@ export class FBAdapter implements SignalDB {
         const unsub = onSnapshot(this.roomRef, async (snap) => {
             if (snap.metadata.hasPendingWrites) return
             const data = snap.data()
+            if (data?.epoch !== undefined) this.roomEpoch = data.epoch
             if (data?.answer) await cb(data.answer as AnswerSDP)
         })
         this.trackUnsub(unsub)
@@ -300,14 +359,14 @@ export class FBAdapter implements SignalDB {
         if (!this.callerCol) throw new Error('Room not selected')
         const json = sanitize(ice.toJSON())
         const ref = doc(this.callerCol, candidateDocId(json))
-        await setDoc(ref, { ...json, createdAt: serverTimestamp() }, { merge: true })
+        await setDoc(ref, { ...json, epoch: this.roomEpoch, createdAt: serverTimestamp() }, { merge: true })
     }
 
     async addCalleeIceCandidate(ice: RTCIceCandidate): Promise<void> {
         if (!this.calleeCol) throw new Error('Room not selected')
         const json = sanitize(ice.toJSON())
         const ref = doc(this.calleeCol, candidateDocId(json))
-        await setDoc(ref, { ...json, createdAt: serverTimestamp() }, { merge: true })
+        await setDoc(ref, { ...json, epoch: this.roomEpoch, createdAt: serverTimestamp() }, { merge: true })
     }
 
 

@@ -3,40 +3,45 @@
 
 import { Observable, shareReplay, map, distinctUntilChanged } from 'rxjs'
 
+type SignalDescription = RTCSessionDescriptionInit & { epoch?: number }
+type SignalIce = RTCIceCandidateInit & { epoch?: number }
+
 export interface SignalDB {
     // управление комнатой
     createRoom(): Promise<string>
-    joinRoom(id: string): Promise<void>
+    joinRoom(id: string, role?: 'caller' | 'callee'): Promise<void>
     endRoom(): Promise<void>
 
     // offer/answer
-    setOffer(offer: RTCSessionDescriptionInit): Promise<void>
-    setAnswer(answer: RTCSessionDescriptionInit): Promise<void>
+    setOffer(offer: SignalDescription): Promise<void>
+    setAnswer(answer: SignalDescription): Promise<void>
     clearOffer(): Promise<void>
     clearAnswer(): Promise<void>
-    subscribeOnOffer(cb: (offer: RTCSessionDescriptionInit) => void): () => void
-    subscribeOnAnswer(cb: (answer: RTCSessionDescriptionInit) => void): () => void
+    subscribeOnOffer(cb: (offer: SignalDescription) => void): () => void
+    subscribeOnAnswer(cb: (answer: SignalDescription) => void): () => void
 
     // ICE
-    addCallerIceCandidate(c: RTCIceCandidateInit): Promise<void>
-    addCalleeIceCandidate(c: RTCIceCandidateInit): Promise<void>
+    addCallerIceCandidate(c: SignalIce): Promise<void>
+    addCalleeIceCandidate(c: SignalIce): Promise<void>
     clearCallerCandidates(): Promise<void>
     clearCalleeCandidates(): Promise<void>
-    subscribeOnCallerIceCandidate(cb: (c: RTCIceCandidateInit) => void): () => void
-    subscribeOnCalleeIceCandidate(cb: (c: RTCIceCandidateInit) => void): () => void
+    subscribeOnCallerIceCandidate(cb: (c: SignalIce) => void): () => void
+    subscribeOnCalleeIceCandidate(cb: (c: SignalIce) => void): () => void
 }
 
 // ——— Утилиты для дедупа ———
 const sdpHash = (s?: string | null) => {
     if (!s) return '∅'
-    const line1 = s.split('\n')[0]?.trim() ?? ''
-    let x = 0
-    for (let i = 0; i < line1.length; i++) x = (x * 33) ^ line1.charCodeAt(i)
-    return `${line1}#${(x >>> 0).toString(16)}`
+    let x = 2166136261
+    for (let i = 0; i < s.length; i++) {
+        x ^= s.charCodeAt(i)
+        x = Math.imul(x, 16777619)
+    }
+    return `len=${s.length}#${(x >>> 0).toString(16)}`
 }
 
-const iceKey = (c: RTCIceCandidateInit) =>
-    `${c.candidate ?? ''}|${c.sdpMid ?? ''}|${c.sdpMLineIndex ?? -1}`
+const iceKey = (c: SignalIce) =>
+    `${c.epoch ?? -1}|${c.candidate ?? ''}|${c.sdpMid ?? ''}|${c.sdpMLineIndex ?? -1}`
 
 // ——— Базовый конвертер subscribe → Observable ———
 function fromSubscribe<T>(sub: (cb: (v: T) => void) => () => void): Observable<T> {
@@ -51,37 +56,37 @@ function fromSubscribe<T>(sub: (cb: (v: T) => void) => () => void): Observable<T
 
 // ——— Обёртка поверх SignalDB с Rx-потоками ———
 export function createSignalStreams(db: SignalDB) {
-    const offerRaw$ = fromSubscribe<RTCSessionDescriptionInit>(db.subscribeOnOffer.bind(db))
-    const answerRaw$ = fromSubscribe<RTCSessionDescriptionInit>(db.subscribeOnAnswer.bind(db))
+    const offerRaw$ = fromSubscribe<SignalDescription>(db.subscribeOnOffer.bind(db))
+    const answerRaw$ = fromSubscribe<SignalDescription>(db.subscribeOnAnswer.bind(db))
 
     // дедуп по SDP (иногда Firestore может прислать повтор)
     const offer$ = offerRaw$.pipe(
-        map((d) => ({ ...d, __h: sdpHash(d.sdp ?? null) } as RTCSessionDescriptionInit & { __h: string })),
+        map((d) => ({ ...d, __h: `${d.epoch ?? -1}:${sdpHash(d.sdp ?? null)}` } as SignalDescription & { __h: string })),
         distinctUntilChanged((a, b) => a.__h === b.__h),
         map(({ __h, ...rest }) => rest),
         shareReplay({ bufferSize: 1, refCount: true }),
     )
 
     const answer$ = answerRaw$.pipe(
-        map((d) => ({ ...d, __h: sdpHash(d.sdp ?? null) } as RTCSessionDescriptionInit & { __h: string })),
+        map((d) => ({ ...d, __h: `${d.epoch ?? -1}:${sdpHash(d.sdp ?? null)}` } as SignalDescription & { __h: string })),
         distinctUntilChanged((a, b) => a.__h === b.__h),
         map(({ __h, ...rest }) => rest),
         shareReplay({ bufferSize: 1, refCount: true }),
     )
 
     // поток ICE для КАЖДОЙ стороны выбирается по роли
-    const callerIceRaw$ = fromSubscribe<RTCIceCandidateInit>(db.subscribeOnCallerIceCandidate.bind(db))
-    const calleeIceRaw$ = fromSubscribe<RTCIceCandidateInit>(db.subscribeOnCalleeIceCandidate.bind(db))
+    const callerIceRaw$ = fromSubscribe<SignalIce>(db.subscribeOnCallerIceCandidate.bind(db))
+    const calleeIceRaw$ = fromSubscribe<SignalIce>(db.subscribeOnCalleeIceCandidate.bind(db))
 
     const callerIce$ = callerIceRaw$.pipe(
-        map((c) => ({ ...c, __k: iceKey(c) }) as RTCIceCandidateInit & { __k: string }),
+        map((c) => ({ ...c, __k: iceKey(c) }) as SignalIce & { __k: string }),
         distinctUntilChanged((a, b) => a.__k === b.__k),
         map(({ __k, ...rest }) => rest),
         shareReplay({ bufferSize: 1, refCount: true }),
     )
 
     const calleeIce$ = calleeIceRaw$.pipe(
-        map((c) => ({ ...c, __k: iceKey(c) }) as RTCIceCandidateInit & { __k: string }),
+        map((c) => ({ ...c, __k: iceKey(c) }) as SignalIce & { __k: string }),
         distinctUntilChanged((a, b) => a.__k === b.__k),
         map(({ __k, ...rest }) => rest),
         shareReplay({ bufferSize: 1, refCount: true }),
