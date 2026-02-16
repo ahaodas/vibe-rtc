@@ -135,15 +135,6 @@ importers:
         specifier: ^4.0.4
         version: 4.0.4(@types/node@24.9.1)(jiti@2.6.1)(yaml@2.8.2)
 
-  packages/vibe-rtc-common:
-    dependencies:
-      '@vibe-rtc/rtc-core':
-        specifier: workspace:^
-        version: link:../rtc-core
-      '@vibe-rtc/rtc-firebase':
-        specifier: workspace:^
-        version: link:../rtc-firebase
-
 packages:
 
   '@babel/code-frame@7.27.1':

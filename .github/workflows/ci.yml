@@ -43,7 +43,6 @@ jobs:
           pnpm --filter @vibe-rtc/rtc-core build
           pnpm --filter @vibe-rtc/rtc-firebase build
           pnpm --filter @vibe-rtc/rtc-react build
-          pnpm --filter vibe-rtc-common build
 
       - name: Build demo
         run: pnpm --filter @vibe-rtc/demo build

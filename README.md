@@ -13,7 +13,6 @@ Monorepo with tools for stable browser-to-browser WebRTC data connections with s
 - `@vibe-rtc/rtc-core`: transport/signaling engine, reconnect logic, typed errors.
 - `@vibe-rtc/rtc-firebase`: Firestore signaling adapter + Firebase bootstrap helpers + rules.
 - `@vibe-rtc/rtc-react`: React provider/hooks on top of `rtc-core`.
-- `vibe-rtc-common`: convenience re-exports for core + firebase.
 - `@vibe-rtc/rtc-e2e`: Playwright E2E tests for reload/recovery scenarios.
 
 ## Workspace
