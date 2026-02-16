@@ -1,112 +1,18 @@
-import React, { createContext, useCallback, useContext, useMemo, useReducer, useRef } from 'react'
+import React, {
+    createContext,
+    useCallback,
+    useContext,
+    useEffect,
+    useMemo,
+    useReducer,
+    useRef,
+} from 'react'
 import type { PropsWithChildren } from 'react'
 import { RTCSignaler, type SignalDB } from '@vibe-rtc/rtc-core'
-import type {
-    VibeRTCContextValue,
-    VibeRTCError,
-    VibeRTCProviderProps,
-    VibeRTCState,
-    TimedMessage,
-    VibeRTCStatus,
-} from './types'
-import { DebugState } from '@vibe-rtc/rtc-core'
-
-type Action =
-    | { type: 'BOOT_START' }
-    | { type: 'BOOT_OK' }
-    | { type: 'BOOT_ERROR'; error: VibeRTCError }
-    | { type: 'SET_STATUS'; status: VibeRTCStatus }
-    | { type: 'SET_LAST_ERROR'; error?: VibeRTCError }
-    | { type: 'FAST_MESSAGE'; message: TimedMessage<string> }
-    | { type: 'RELIABLE_MESSAGE'; message: TimedMessage<string> }
-    | { type: 'SET_ROOM'; roomId: string | null }
-    | { type: 'RESET_MESSAGES' }
-    | { type: 'SET_DEBUG_DATA'; debugState: DebugState }
-
-const initialState: VibeRTCState = {
-    status: 'idle',
-    booting: false,
-    bootError: undefined,
-    lastError: undefined,
-    lastFastMessage: undefined,
-    lastReliableMessage: undefined,
-    roomId: null,
-    messageSeqFast: 0,
-    messageSeqReliable: 0,
-}
-
-function reducer(state: VibeRTCState, a: Action): VibeRTCState {
-    switch (a.type) {
-        case 'BOOT_START':
-            return { ...state, booting: true, bootError: undefined, status: 'booting' }
-        case 'BOOT_OK':
-            return { ...state, booting: false, bootError: undefined, status: 'idle' }
-        case 'BOOT_ERROR':
-            return { ...state, booting: false, bootError: a.error, status: 'error' }
-        case 'SET_STATUS':
-            return { ...state, status: a.status }
-        case 'SET_LAST_ERROR':
-            return { ...state, lastError: a.error, status: a.error ? 'error' : state.status }
-        case 'FAST_MESSAGE':
-            return {
-                ...state,
-                lastFastMessage: a.message,
-                messageSeqFast: (state.messageSeqFast ?? 0) + 1,
-            }
-        case 'RELIABLE_MESSAGE':
-            return {
-                ...state,
-                lastReliableMessage: a.message,
-                messageSeqReliable: (state.messageSeqReliable ?? 0) + 1,
-            }
-        case 'SET_ROOM':
-            return { ...state, roomId: a.roomId }
-        case 'RESET_MESSAGES':
-            return {
-                ...state,
-                lastFastMessage: undefined,
-                lastReliableMessage: undefined,
-                messageSeqFast: 0,
-                messageSeqReliable: 0,
-            }
-        case 'SET_DEBUG_DATA':
-            return {
-                ...state,
-                debugState: a.debugState,
-            }
-        default:
-            return state
-    }
-}
+import type { VibeRTCContextValue, VibeRTCProviderProps, TimedMessage } from './types'
+import { initialState, mapPcState, normalizeError, reducer } from './state'
 
 const Ctx = createContext<VibeRTCContextValue | null>(null)
-
-function normalizeError(err: unknown): VibeRTCError {
-    const any = err as any
-    return {
-        name: String(any?.name ?? 'Error'),
-        message: String(any?.message ?? 'Unknown error'),
-        code: typeof any?.code === 'string' ? any.code : undefined,
-        cause: any?.cause,
-        at: Date.now(),
-    }
-}
-
-function mapPcState(s: RTCPeerConnectionState): VibeRTCStatus {
-    switch (s) {
-        case 'connected':
-            return 'connected'
-        case 'disconnected':
-        case 'failed':
-        case 'closed':
-            return 'disconnected'
-        case 'new':
-        case 'connecting':
-            return 'connecting'
-        default:
-            return 'idle'
-    }
-}
 
 export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) {
     const {
@@ -123,6 +29,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     const signalDbRef = useRef<SignalDB | null>(null)
     const signalerRef = useRef<RTCSignaler | null>(null)
     const initPromiseRef = useRef<Promise<SignalDB> | null>(null)
+    const autoHeartbeatStopRef = useRef<(() => void) | null>(null)
 
     const getSignalDB = useCallback(async (): Promise<SignalDB> => {
         if (signalDbRef.current) return signalDbRef.current
@@ -197,6 +104,10 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     )
 
     const disposeSignaler = useCallback(async () => {
+        if (autoHeartbeatStopRef.current) {
+            autoHeartbeatStopRef.current()
+            autoHeartbeatStopRef.current = null
+        }
         const s = signalerRef.current
         signalerRef.current = null
         if (s) {
@@ -208,6 +119,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     }, [])
 
     const createChannel = useCallback(async () => {
+        await disposeSignaler()
         dispatch({ type: 'RESET_MESSAGES' })
         dispatch({ type: 'SET_STATUS', status: 'connecting' })
         try {
@@ -220,11 +132,12 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             dispatch({ type: 'SET_LAST_ERROR', error: normalizeError(e) })
             throw e
         }
-    }, [ensureSignaler])
+    }, [disposeSignaler, ensureSignaler])
 
     const joinChannel = useCallback(
         async (roomId: string) => {
             if (!roomId) throw new Error('[rtc-react] joinChannel(roomId) requires roomId')
+            await disposeSignaler()
             dispatch({ type: 'RESET_MESSAGES' })
             dispatch({ type: 'SET_STATUS', status: 'connecting' })
             try {
@@ -237,7 +150,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 throw e
             }
         },
-        [ensureSignaler],
+        [disposeSignaler, ensureSignaler],
     )
 
     const attachAsCaller = useCallback(
@@ -337,9 +250,11 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                         await new Promise((r) => setTimeout(r, 15_000))
                     }
                 })()
-                return () => {
+                const stop = () => {
                     alive = false
                 }
+                autoHeartbeatStopRef.current = stop
+                return stop
             } catch (e) {
                 dispatch({ type: 'SET_LAST_ERROR', error: normalizeError(e) })
                 throw e
@@ -373,6 +288,28 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         await s.sendReliable(text)
     }, [])
 
+    const reconnectSoft = useCallback(async () => {
+        const s = signalerRef.current
+        if (!s) throw new Error('[rtc-react] Not connected')
+        await s.reconnectSoft()
+    }, [])
+
+    const reconnectHard = useCallback(async (opts?: { awaitReadyMs?: number }) => {
+        const s = signalerRef.current
+        if (!s) throw new Error('[rtc-react] Not connected')
+        await s.reconnectHard(opts)
+    }, [])
+
+    useEffect(() => {
+        return () => {
+            if (autoHeartbeatStopRef.current) {
+                autoHeartbeatStopRef.current()
+                autoHeartbeatStopRef.current = null
+            }
+            void disposeSignaler()
+        }
+    }, [disposeSignaler])
+
     const value: VibeRTCContextValue = useMemo(
         () => ({
             ...state,
@@ -386,6 +323,8 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             endRoom,
             sendFast,
             sendReliable,
+            reconnectSoft,
+            reconnectHard,
             debugState: state.debugState,
         }),
         [
@@ -399,6 +338,8 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             endRoom,
             sendFast,
             sendReliable,
+            reconnectSoft,
+            reconnectHard,
             state.debugState,
         ],
     )

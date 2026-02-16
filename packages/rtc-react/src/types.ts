@@ -48,6 +48,8 @@ export interface VibeRTCContextValue extends VibeRTCState {
     /** Отправка сообщений */
     sendFast: (text: string) => Promise<void>
     sendReliable: (text: string) => Promise<void>
+    reconnectSoft: () => Promise<void>
+    reconnectHard: (opts?: { awaitReadyMs?: number }) => Promise<void>
     attachAsCaller: (roomId: string) => Promise<void>
     attachAsCallee: (roomId: string) => Promise<void>
     attachAuto(
