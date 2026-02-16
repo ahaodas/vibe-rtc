@@ -6,7 +6,7 @@ export default {
     },
     format: ['esm', 'cjs'],
     dts: { resolve: false },
-    external: ['@vibe-rtc/rtc-core', '@vibe-rtc/rtc-firebase'],
+    external: ['@vibe-rtc/rtc-core', 'react'],
     clean: true,
     sourcemap: true,
 }

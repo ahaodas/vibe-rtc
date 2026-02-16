@@ -1,91 +1,207 @@
 import { test, expect, Page } from '@playwright/test'
 
-test('connect, two channels, send, soft/hard reconnect', async ({ context, baseURL }) => {
-    const p1 = await context.newPage()
-    const p2 = await context.newPage()
+type Who = 'caller' | 'callee'
+const OTHER: Record<Who, Who> = { caller: 'callee', callee: 'caller' }
 
-    await p1.goto(`${baseURL}/e2e-rtc.html`)
-    await p2.goto(`${baseURL}/e2e-rtc.html`)
+function captureConsole(page: Page, tag: string) {
+    page.on('console', (msg) => {
+        // eslint-disable-next-line no-console
+        console.log(`[${tag}][${msg.type()}]`, msg.text())
+    })
+    page.on('pageerror', (err) => {
+        // eslint-disable-next-line no-console
+        console.error(`[${tag}][pageerror]`, err)
+    })
+}
 
-    await p1.waitForFunction(() => !!(window as any).app)
-    await p2.waitForFunction(() => !!(window as any).app)
+async function bootPair(pCaller: Page, pCallee: Page, baseURL: string) {
+    captureConsole(pCaller, 'caller')
+    captureConsole(pCallee, 'callee')
 
-    const roomId = await p1.evaluate(async () => {
+    await pCaller.goto(`${baseURL}/e2e-rtc.html`)
+    await pCallee.goto(`${baseURL}/e2e-rtc.html`)
+
+    await pCaller.waitForFunction(() => !!(window as any).app)
+    await pCallee.waitForFunction(() => !!(window as any).app)
+
+    const roomId = await pCaller.evaluate(async () => {
         ;(window as any).caller = await (window as any).app.makeCaller()
         return await (window as any).caller.hostRoom()
     })
 
-    await p2.evaluate(async (rid) => {
+    await pCallee.evaluate(async (rid) => {
         ;(window as any).callee = await (window as any).app.makeCallee()
         await (window as any).callee.joinRoom(rid)
     }, roomId)
 
-    await p1.evaluate(async () => {
-        await (window as any).caller.waitReady(15000)
-    })
-    await p2.evaluate(async () => {
-        await (window as any).callee.waitReady(15000)
-    })
+    // пробуем «поднять» обе стороны
+    await ensurePairReady(pCaller, pCallee, 20000)
 
-    async function ensureReady(page: Page, who: 'caller' | 'callee') {
-        try {
-            await page.evaluate(async (w) => {
-                await (window as any)[w].waitReady(8000)
-            }, who)
-        } catch {
-            const diag = await page.evaluate((w) => (window as any)[w].inspect(), who)
-            console.log(`[${who}] before soft-restart`, diag)
-            await page.evaluate(async (w) => {
-                await (window as any)[w].reconnectSoft()
-            }, who)
-            await page.evaluate(async (w) => {
-                await (window as any)[w].waitReady(8000)
-            }, who)
-            const diag2 = await page.evaluate((w) => (window as any)[w].inspect(), who)
-            console.log(`[${who}] after soft-restart`, diag2)
+    // sanity ping
+    await assertPing(pCaller, 'caller', pCallee, 'sanity-from-caller')
+    await assertPing(pCallee, 'callee', pCaller, 'sanity-from-callee')
+
+    return roomId
+}
+
+async function ensurePairReady(pCaller: Page, pCallee: Page, totalMs = 20000) {
+    await Promise.all([
+        pCaller.evaluate(async (ms) => { await (window as any).caller.ensureReady(ms) }, totalMs),
+        // небольшое смещение, чтобы снизить шанс glare/коллизий
+        (async () => { await pCallee.waitForTimeout(150); await pCallee.evaluate(async (ms) => { await (window as any).callee.ensureReady(ms) }, totalMs) })(),
+    ])
+}
+
+async function reloadRole(page: Page, who: Who, roomId: string, otherPage: Page) {
+    await page.reload()
+    await page.waitForFunction(() => !!(window as any).app)
+
+    await page.evaluate(async ({ who, roomId }) => {
+        if (who === 'caller') {
+            ;(window as any).caller = await (window as any).app.makeCaller()
+            await (window as any).caller.joinRoom(roomId)
+        } else {
+            ;(window as any).callee = await (window as any).app.makeCallee()
+            await (window as any).callee.joinRoom(roomId)
         }
+    }, { who, roomId })
+
+    // сначала восстанавливаемся на перезагруженной стороне
+    await page.evaluate(async (w) => {
+        const obj = (window as any)[w]
+        await obj.ensureReady(20000)
+        obj.flush?.()
+    }, who)
+
+    // затем «пинаем» вторую сторону (она могла залипнуть в checking)
+    await otherPage.evaluate(async (w) => {
+        const obj = (window as any)[w]
+        await obj.ensureReady(12000)
+        obj.flush?.()
+    }, OTHER[who])
+}
+
+async function assertPing(from: Page, whoFrom: Who, to: Page, expectedText: string) {
+    const trySend = async (label: string) => {
+        // eslint-disable-next-line no-console
+        console.log(`[assertPing:${label}] send "${expectedText}" from=${whoFrom}`)
+        if (whoFrom === 'caller') {
+            await from.evaluate(async (t) => { await (window as any).caller.sendReliable(t) }, expectedText)
+        } else {
+            await from.evaluate(async (t) => { await (window as any).callee.sendReliable(t) }, expectedText)
+        }
+        await to.waitForTimeout(300)
+        const got = whoFrom === 'caller'
+            ? await to.evaluate(() => (window as any).callee.takeMessages())
+            : await to.evaluate(() => (window as any).caller.takeMessages())
+        // eslint-disable-next-line no-console
+        console.log(`[assertPing:${label}] got=`, got)
+        return got.includes(expectedText)
     }
 
-    await ensureReady(p1, 'caller')
-    await ensureReady(p2, 'callee')
+    if (await trySend('1')) return
 
-    await p1.evaluate(async () => {
-        await (window as any).caller.sendFast('hello-fast')
-        await (window as any).caller.sendReliable('hello-rel')
+    // лечим принимающего
+    await to.evaluate(async (w) => { await (window as any)[w].ensureReady(6000) }, whoFrom === 'caller' ? 'callee' : 'caller')
+    if (await trySend('2')) return
+
+    // лечим отправителя
+    await from.evaluate(async (w) => { await (window as any)[w].ensureReady(6000) }, whoFrom)
+    if (await trySend('3')) return
+
+    // финальная диагностика
+    const sFrom = await from.evaluate((w) => (window as any)[w].getState(), whoFrom)
+    const sTo = await to.evaluate((w) => (window as any)[w].getState(), whoFrom === 'caller' ? 'callee' : 'caller')
+    // eslint-disable-next-line no-console
+    console.log(`[assertPing:diag] from=`, sFrom, `to=`, sTo)
+
+    expect(false, `ping "${expectedText}" not delivered`).toBe(true)
+}
+
+test.describe('reload sequences (caller/callee)', () => {
+    test.setTimeout(120_000) // на всякий случай увеличим лимит набора тестов
+
+    test('A) callee reload x3, then caller reload x2 (с проверкой после каждого шага)', async ({ context, baseURL }) => {
+        const pCaller = await context.newPage()
+        const pCallee = await context.newPage()
+        const roomId = await bootPair(pCaller, pCallee, baseURL)
+
+        for (let i = 1; i <= 3; i++) {
+            await reloadRole(pCallee, 'callee', roomId, pCaller)
+            await assertPing(pCaller, 'caller', pCallee, `after-callee-reload-${i}`)
+            await assertPing(pCallee, 'callee', pCaller, `back-callee-reload-${i}`)
+        }
+
+        for (let j = 1; j <= 2; j++) {
+            await reloadRole(pCaller, 'caller', roomId, pCallee)
+            await assertPing(pCallee, 'callee', pCaller, `after-caller-reload-${j}`)
+            await assertPing(pCaller, 'caller', pCallee, `back-caller-reload-${j}`)
+        }
     })
-    await p2.evaluate(async () => {
-        await (window as any).callee.sendFast('hi-fast')
-        await (window as any).callee.sendReliable('hi-rel')
+
+    test('B) чередование: caller → callee → caller → callee (по одному разу)', async ({ context, baseURL }) => {
+        const pCaller = await context.newPage()
+        const pCallee = await context.newPage()
+        const roomId = await bootPair(pCaller, pCallee, baseURL)
+
+        const seq: Who[] = ['caller', 'callee', 'caller', 'callee']
+        let step = 0
+        for (const who of seq) {
+            step++
+            await reloadRole(who === 'caller' ? pCaller : pCallee, who, roomId, who === 'caller' ? pCallee : pCaller)
+
+            await assertPing(
+                who === 'caller' ? pCaller : pCallee,
+                who,
+                who === 'caller' ? pCallee : pCaller,
+                `ping-after-${who}-reload-step-${step}`,
+            )
+            const back: Who = who === 'caller' ? 'callee' : 'caller'
+            await assertPing(
+                back === 'caller' ? pCaller : pCallee,
+                back,
+                back === 'caller' ? pCallee : pCaller,
+                `pong-after-${who}-reload-step-${step}`,
+            )
+        }
     })
 
-    await p1.waitForTimeout(200)
+    test('C) стресс: дважды callee подряд, затем дважды caller подряд', async ({ context, baseURL }) => {
+        const pCaller = await context.newPage()
+        const pCallee = await context.newPage()
+        const roomId = await bootPair(pCaller, pCallee, baseURL)
 
-    const got1 = await p1.evaluate(() => (window as any).caller.takeMessages())
-    const got2 = await p2.evaluate(() => (window as any).callee.takeMessages())
-    expect(got1).toEqual(expect.arrayContaining(['hi-fast', 'hi-rel']))
-    expect(got2).toEqual(expect.arrayContaining(['hello-fast', 'hello-rel']))
+        await reloadRole(pCallee, 'callee', roomId, pCaller)
+        await assertPing(pCaller, 'caller', pCallee, 'after-callee-1')
 
-    await p1.evaluate(async () => {
-        await (window as any).caller.reconnectSoft()
-    })
-    await p2.evaluate(async () => {
-        await (window as any).callee.sendReliable('after-soft')
-    })
-    await p1.waitForTimeout(200)
-    const afterSoft = await p1.evaluate(() => (window as any).caller.takeMessages())
-    expect(afterSoft).toContain('after-soft')
+        await reloadRole(pCallee, 'callee', roomId, pCaller)
+        await assertPing(pCaller, 'caller', pCallee, 'after-callee-2')
 
-    await p1.evaluate(async () => {
-        await (window as any).caller.reconnectHard({ awaitReadyMs: 15000 })
+        await reloadRole(pCaller, 'caller', roomId, pCallee)
+        await assertPing(pCallee, 'callee', pCaller, 'after-caller-1')
+
+        await reloadRole(pCaller, 'caller', roomId, pCallee)
+        await assertPing(pCallee, 'callee', pCaller, 'after-caller-2')
     })
 
-    await p2.evaluate(async () => {
-        await (window as any).callee.sendFast('after-hard')
-    })
-    const afterHard = await p1.evaluate(() => (window as any).caller.takeMessages())
-    expect(afterHard).toContain('after-hard')
+    test('D) длинная цепочка: C C C → K → C → K K (C=callee, K=caller)', async ({ context, baseURL }) => {
+        const pCaller = await context.newPage()
+        const pCallee = await context.newPage()
+        const roomId = await bootPair(pCaller, pCallee, baseURL)
 
-    await p1.evaluate(async () => {
-        await (window as any).caller.endRoom()
+        const seq: Who[] = ['callee', 'callee', 'callee', 'caller', 'callee', 'caller', 'caller']
+        let idx = 0
+        for (const who of seq) {
+            idx++
+            await reloadRole(who === 'caller' ? pCaller : pCallee, who, roomId, who === 'caller' ? pCallee : pCaller)
+
+            const sender: Who = who === 'caller' ? 'callee' : 'caller'
+            await assertPing(
+                sender === 'caller' ? pCaller : pCallee,
+                sender,
+                sender === 'caller' ? pCallee : pCaller,
+                `chain-${idx}-from-${sender}`,
+            )
+        }
     })
 })

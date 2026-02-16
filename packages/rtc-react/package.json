@@ -1,0 +1,40 @@
+{
+    "name": "@vibe-rtc/rtc-react",
+    "version": "0.1.0",
+    "description": "React adapter (hook) for vibe-rtc core",
+    "type": "module",
+    "private": false,
+    "main": "./dist/index.cjs",
+    "module": "./dist/index.mjs",
+    "types": "./dist/index.ts",
+    "exports": {
+        ".": {
+            "development": "./src/index.ts",
+            "types": "./dist/index.d.ts",
+            "import": "./dist/index.mjs",
+            "require": "./dist/index.cjs"
+        }
+    },
+    "files": [
+        "dist"
+    ],
+    "sideEffects": false,
+    "peerDependencies": {
+        "react": ">=18"
+    },
+    "dependencies": {
+        "@vibe-rtc/rtc-core": "workspace:^"
+    },
+    "devDependencies": {
+        "react": "18.3.1",
+        "vitest": "^2.0.0",
+        "@types/react": "^18.2.0"
+    },
+    "scripts": {
+        "build": "tsup",
+        "build:watch": "tsup --watch",
+        "clean": "rm -rf dist",
+        "test": "vitest run",
+        "test:watch": "vitest"
+    }
+}

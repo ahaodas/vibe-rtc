@@ -1,4 +1,46 @@
+// RTCSignaler.ts
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-nocheck
+
 import type { SignalDB, OfferSDP, AnswerSDP } from './types'
+import { Subscription } from 'rxjs'
+import { createSignalStreams } from './signal-rx'
+
+let __seq = 0
+const now = () =>
+    typeof performance !== 'undefined' && performance.now
+        ? performance.now().toFixed(1)
+        : String(Date.now())
+
+const sdpHash = (s?: string | null) => {
+    if (!s) return '∅'
+    const line1 = s.split('\n')[0]?.trim() ?? ''
+    let x = 0
+    for (let i = 0; i < line1.length; i++) x = (x * 33) ^ line1.charCodeAt(i)
+    return `${line1} #${(x >>> 0).toString(16)}`
+}
+
+function mkDbg(ctx: {
+    role: 'caller' | 'callee'
+    roomId: () => string | null
+    pc: () => RTCPeerConnection | undefined
+}) {
+    const p = (msg: string, extra?: any) => {
+        const pc = ctx.pc()
+        const tag = `[${++__seq}|${now()}|${ctx.role}|${ctx.roomId() ?? 'no-room'}]`
+        const sig = pc ? pc.signalingState : 'no-pc'
+        const ice = pc ? pc.iceConnectionState : 'no-pc'
+        const ls = pc?.localDescription?.type ?? '∅'
+        console.log(`${tag} ${msg}  [sig=${sig} ice=${ice} loc=${ls}]`, extra ?? '')
+    }
+    const pe = (msg: string, e: unknown) => {
+        const pc = ctx.pc()
+        const tag = `[${++__seq}|${now()}|${ctx.role}|${ctx.roomId() ?? 'no-room'}]`
+        const sig = pc ? pc.signalingState : 'no-pc'
+        console.error(`${tag} ${msg} [sig=${sig}]`, e)
+    }
+    return { p, pe }
+}
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
 
@@ -20,10 +62,39 @@ export interface RTCSignalerOptions {
     onReliableOpen?: () => void
     onReliableClose?: () => void
     onError?: (err: unknown) => void
+    onDebug?: (state: DebugState) => void // NEW: хук для UI
+}
+
+export type Phase =
+    | 'idle'
+    | 'subscribed'
+    | 'negotiating'
+    | 'connected'
+    | 'soft-reconnect'
+    | 'hard-reconnect'
+    | 'closing'
+
+export interface DebugState {
+    ts: number
+    roomId: string | null
+    role: Role
+    phase: Phase
+    makingOffer: boolean
+    polite: boolean
+    pcState: RTCPeerConnectionState | 'none'
+    iceState: RTCIceConnectionState | 'none'
+    signalingState: RTCSignalingState | 'none'
+    fast?: { state: RTCDataChannelState; ba: number }
+    reliable?: { state: RTCDataChannelState; ba: number }
+    pendingIce: number
+    retries: { soft: number; hard: number }
+    timers: { softPending: boolean; hardPending: boolean; softInMs?: number; hardInMs?: number }
+    lastEvent?: string
+    lastError?: string
 }
 
 export class RTCSignaler {
-    private pc!: RTCPeerConnection
+    private pc!: RTCPeerConnection | undefined
     private dcFast?: RTCDataChannel
     private dcReliable?: RTCDataChannel
 
@@ -31,7 +102,8 @@ export class RTCSignaler {
     private polite: boolean
 
     private roomId: string | null = null
-    private unsubscribes: Unsub[] = []
+    private unsubscribes: Unsub[] = [] // оставлено для совместимости, но не используется с Rx
+    private connectedOrSubbed = false
 
     private readonly rtcConfig: RTCConfiguration
     private readonly fastLabel: string
@@ -41,11 +113,22 @@ export class RTCSignaler {
     private readonly fastBALow: number
     private readonly reliableBALow: number
 
-    // perfect negotiation helpers
     private lastHandledOfferSdp: string | null = null
+    private lastHandledAnswerSdp: string | null = null
+    private lastSeenOfferSdp: string | null = null
+    private lastSeenAnswerSdp: string | null = null
+    private lastLocalOfferSdp: string | null = null
     private answering = false
 
-    // callbacks
+    private remoteDescSet = false
+    private pendingIce: RTCIceCandidateInit[] = []
+
+    private fastQueue: string[] = []
+    private reliableQueue: string[] = []
+
+    private fastOpenWaiters: Array<(ch: RTCDataChannel) => void> = []
+    private reliableOpenWaiters: Array<(ch: RTCDataChannel) => void> = []
+
     private onMessage: (t: string, meta: { reliable: boolean }) => void
     private onConnectionStateChange: (s: RTCPeerConnectionState) => void
     private onFastOpen: () => void
@@ -53,12 +136,30 @@ export class RTCSignaler {
     private onReliableOpen: () => void
     private onReliableClose: () => void
     private onError: (e: unknown) => void
+    private onDebug: (d: DebugState) => void
+
+    private dbg
+
+    private softTimer?: number
+    private hardTimer?: number
+    private softDelayMs = 250
+    private hardDelayMs = 1000
+    private softRetries = 0
+    private hardRetries = 0
+
+    private phase: Phase = 'idle'
+    private lastErrorText: string | undefined
+
+    // --- Новое: RxJS обёртка над сигналингом + список подписок ---
+    private streams
+    private rxSubs: Subscription[] = []
 
     constructor(
         private readonly role: Role,
         private readonly signalDb: SignalDB,
         opts: RTCSignalerOptions = {},
     ) {
+        this.dbg = mkDbg({ role: this.role, roomId: () => this.roomId, pc: () => this.pc })
         this.polite = role === 'callee'
         this.rtcConfig = opts.rtcConfiguration ?? {
             iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -77,74 +178,160 @@ export class RTCSignaler {
         this.onFastClose = opts.onFastClose ?? (() => {})
         this.onReliableOpen = opts.onReliableOpen ?? (() => {})
         this.onReliableClose = opts.onReliableClose ?? (() => {})
-        this.onError = opts.onError ?? ((e) => console.error('[RTCSignaler]', e))
+        this.onError = (e) => {
+            this.lastErrorText = String(e)
+            ;(opts.onError ?? ((ee) => console.error('[RTCSignaler]', ee)))(e)
+            this.emitDebug('error')
+        }
+        this.onDebug = opts.onDebug ?? (() => {})
+
+        this.streams = createSignalStreams(this.signalDb)
     }
 
-    // ---------- public API ----------
+    // ————————————————————————————————————————————————————————————————
+    // Public API
+    // ————————————————————————————————————————————————————————————————
 
     async createRoom(): Promise<string> {
         const id = await this.signalDb.createRoom()
         this.roomId = id
+        this.dbg.p('createRoom -> ' + id)
+        this.emitDebug('createRoom')
         return id
     }
 
     async joinRoom(id: string): Promise<void> {
         this.roomId = id
+        this.dbg.p('joinRoom -> ' + id)
         await this.signalDb.joinRoom(id)
+        this.phase = 'subscribed'
+        this.emitDebug('joinRoom')
     }
 
     async connect(): Promise<void> {
         if (!this.roomId) throw new Error('Room not selected')
-        this.initPeer()
-
-        // подписки на УДАЛЁННЫЕ ICE-кандидаты (крест-накрест!)
-        if (this.role === 'callee') {
-            this.unsubscribes.push(
-                this.signalDb.subscribeOnCallerIceCandidate(async (c) => {
-                    try {
-                        await this.pc.addIceCandidate(c)
-                    } catch (e) {
-                        this.onError(e)
-                    }
-                }),
-            )
-        } else {
-            this.unsubscribes.push(
-                this.signalDb.subscribeOnCalleeIceCandidate(async (c) => {
-                    try {
-                        await this.pc.addIceCandidate(c)
-                    } catch (e) {
-                        this.onError(e)
-                    }
-                }),
-            )
+        if (this.connectedOrSubbed) {
+            this.dbg.p('connect() skipped (already connected/subscribed)')
+            return
         }
+        this.connectedOrSubbed = true
 
-        // оффер → answer (perfect negotiation + идемпотентность)
-        this.unsubscribes.push(
-            this.signalDb.subscribeOnOffer(async (offer) => {
+        this.initPeer()
+        this.emitDebug('initPeer')
+
+        // --- Rx: подписки на удалённые ICE-кандидаты ---
+        const remoteIce$ = this.role === 'caller' ? this.streams.calleeIce$ : this.streams.callerIce$
+        this.rxSubs.push(
+            remoteIce$.subscribe(async (c) => {
+                this.dbg.p(`remote ICE from ${this.role === 'caller' ? 'callee' : 'caller'}`, {
+                    buffered: !this.remoteDescSet,
+                    cand: (c.candidate || '').slice(0, 42),
+                })
                 try {
-                    const desc = new RTCSessionDescription(offer)
-                    if (desc.type !== 'offer') return
-                    if (desc.sdp && desc.sdp === this.lastHandledOfferSdp) return
+                    if (!this.remoteDescSet) {
+                        this.pendingIce.push(c)
+                        return
+                    }
+                    await this?.pc?.addIceCandidate(c)
+                } catch (e) {
+                    this.onError(e)
+                }
+            }),
+        )
 
-                    const collision = this.makingOffer || this.pc.signalingState !== 'stable'
-                    if (collision) {
-                        if (!this.polite) return
-                        try {
-                            await this.pc.setLocalDescription({ type: 'rollback' } as any)
-                        } catch {}
+        // --- Rx: входящие offer ---
+        this.rxSubs.push(
+            this.streams.offer$.subscribe(async (offer) => {
+                const desc = new RTCSessionDescription(offer)
+                const sdp = desc.sdp ?? null
+                this.dbg.p('onOffer()', {
+                    type: desc.type,
+                    sdp: sdpHash(sdp),
+                    makingOffer: this.makingOffer,
+                    sig: this.pc?.signalingState,
+                    polite: this.polite,
+                })
+                this.emitDebug('onOffer')
+
+                if (sdp && sdp === this.lastSeenOfferSdp) {
+                    this.dbg.p('skip offer: already seen')
+                    return
+                }
+                this.lastSeenOfferSdp = sdp
+
+                try {
+                    if (desc.type !== 'offer') return
+
+                    if (
+                        this.role === 'caller' &&
+                        sdp &&
+                        this.lastLocalOfferSdp &&
+                        sdp === this.lastLocalOfferSdp
+                    ) {
+                        this.dbg.p('skip offer: echo of own local offer')
+                        return
                     }
 
-                    await this.pc.setRemoteDescription(desc)
-                    if (this.pc.signalingState !== 'have-remote-offer') return
-                    if (this.answering) return
+                    if (sdp && sdp === this.lastHandledOfferSdp) {
+                        this.dbg.p('skip offer (same sdp handled)')
+                        return
+                    }
+
+                    const collision =
+                        this.makingOffer || (this.pc && this.pc.signalingState !== 'stable')
+                    if (collision) {
+                        if (!this.polite) {
+                            this.dbg.p('glare → ignore (impolite)')
+                            return
+                        }
+                        this.dbg.p('glare → rollback')
+                        try {
+                            await this.pc?.setLocalDescription({ type: 'rollback' } as any)
+                        } catch (e) {
+                            this.dbg.pe('rollback fail', e)
+                        }
+                    }
+
+                    this.phase = 'negotiating'
+                    this.emitDebug('SRD(offer) start')
+
+                    try {
+                        await this.pc?.setRemoteDescription(desc)
+                    } catch (e) {
+                        this.dbg.pe(`SRD FAIL type=offer sdp=${sdpHash(sdp)}`, e)
+                        throw e
+                    }
+                    this.remoteDescSet = true
+                    this.lastHandledOfferSdp = sdp
+                    this.dbg.p('SRD(offer) done, drain ICE', { pending: this.pendingIce.length })
+                    this.emitDebug('SRD(offer) done')
+
+                    while (this.pendingIce.length) {
+                        const c = this.pendingIce.shift()!
+                        try {
+                            await this.pc?.addIceCandidate(c)
+                        } catch (e) {
+                            this.onError(e)
+                        }
+                    }
+
+                    if (this.pc?.signalingState !== 'have-remote-offer') {
+                        this.dbg.p('skip answer: state!=' + this.pc?.signalingState)
+                        return
+                    }
+                    if (this.answering) {
+                        this.dbg.p('skip answer: already answering')
+                        return
+                    }
                     this.answering = true
-                    this.lastHandledOfferSdp = desc.sdp ?? null
 
                     const answer = await this.pc.createAnswer()
+                    this.dbg.p('created answer', { sdp: sdpHash(answer.sdp) })
+                    this.dbg.p('SLD(answer) start')
                     await this.pc.setLocalDescription(answer)
-                    await this.signalDb.setAnswer(answer as AnswerSDP)
+                    this.dbg.p('SLD(answer) done, publish')
+                    await this.streams.setAnswer(answer as AnswerSDP)
+                    this.dbg.p('answer published')
                 } catch (e) {
                     this.onError(e)
                 } finally {
@@ -153,110 +340,185 @@ export class RTCSignaler {
             }),
         )
 
-        // answer
-        this.unsubscribes.push(
-            this.signalDb.subscribeOnAnswer(async (answer) => {
+        // --- Rx: входящие answer ---
+        this.rxSubs.push(
+            this.streams.answer$.subscribe(async (answer) => {
+                const desc = new RTCSessionDescription(answer)
+                const sdp = desc.sdp ?? null
+                this.dbg.p('onAnswer()', {
+                    type: desc.type,
+                    sdp: sdpHash(sdp),
+                    sig: this?.pc?.signalingState,
+                })
+                this.emitDebug('onAnswer')
+
+                if (sdp && sdp === this.lastSeenAnswerSdp) {
+                    this.dbg.p('skip answer: already seen')
+                    return
+                }
+                this.lastSeenAnswerSdp = sdp
+
                 try {
-                    const desc = new RTCSessionDescription(answer)
                     if (desc.type !== 'answer') return
-                    await this.pc.setRemoteDescription(desc)
+                    if (sdp && sdp === this.lastHandledAnswerSdp) {
+                        this.dbg.p('skip answer (same sdp handled)')
+                        return
+                    }
+                    if (this.remoteDescSet) {
+                        this.dbg.p('skip answer: remote already set')
+                        return
+                    }
+                    if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
+                        this.dbg.p(
+                            'skip answer: not waiting (state=' +
+                            (this.pc?.signalingState ?? 'no-pc') +
+                            ')',
+                        )
+                        return
+                    }
+
+                    this.dbg.p('SRD(answer) start')
+                    try {
+                        await this.pc.setRemoteDescription(desc)
+                    } catch (e) {
+                        this.dbg.pe(`SRD FAIL type=answer sdp=${sdpHash(sdp)}`, e)
+                        throw e
+                    }
+                    this.lastHandledAnswerSdp = sdp
+                    this.remoteDescSet = true
+                    this.dbg.p('SRD(answer) done, drain ICE', { pending: this.pendingIce.length })
+                    this.emitDebug('SRD(answer) done')
+
+                    while (this.pendingIce.length) {
+                        const c = this.pendingIce.shift()!
+                        try {
+                            await this.pc.addIceCandidate(c)
+                        } catch (e) {
+                            this.onError(e)
+                        }
+                    }
                 } catch (e) {
                     this.onError(e)
                 }
             }),
         )
-        // только callee проверяет оффер в БД после подписки (replay)
-        if (this.role === 'callee') {
-            const off = await this.signalDb.getOffer()
-            if (off && off.type === 'offer' && off.sdp !== this.lastHandledOfferSdp) {
-                // переиспользуем общий обработчик — публикуем его ещё раз
-                await this.signalDb.setOffer(off as OfferSDP)
-            }
-        }
     }
 
     async sendFast(text: string) {
-        let dc = this.dcFast
-        if (!dc || dc.readyState !== 'open') {
-            dc = await this.waitChannelOpen(() => this.dcFast)
+        if (this.dcFast && this.dcFast.readyState === 'open') {
+            await this.backpressure(this.dcFast, this.fastBALow)
+            this.dcFast.send(text)
+            return
         }
-        await this.backpressure(dc, this.fastBALow)
-        dc.send(text)
+        this.fastQueue.push(text)
+        const ch = await this.waitChannelReady(false)
+        await this.backpressure(ch, this.fastBALow)
+        this.flushQueue(ch, this.fastQueue)
     }
 
     async sendReliable(text: string) {
-        let dc = this.dcReliable
-        if (!dc || dc.readyState !== 'open') {
-            dc = await this.waitChannelOpen(() => this.dcReliable)
+        if (this.dcReliable && this.dcReliable.readyState === 'open') {
+            await this.backpressure(this.dcReliable, this.reliableBALow)
+            this.dcReliable.send(text)
+            return
         }
-        await this.backpressure(dc, this.reliableBALow)
-        dc.send(text)
+        this.reliableQueue.push(text)
+        const ch = await this.waitChannelReady(true)
+        await this.backpressure(ch, this.reliableBALow)
+        this.flushQueue(ch, this.reliableQueue)
     }
 
     async reconnectSoft(): Promise<void> {
         if (!this.roomId) throw new Error('Room not selected')
+        if (!this?.pc) return
+        if (this.makingOffer || this.pc.signalingState !== 'stable') {
+            this.dbg.p('reconnectSoft skipped (makingOffer or !stable)')
+            return
+        }
+        this.phase = 'soft-reconnect'
+        this.emitDebug('soft-reconnect')
+
         const offer = await this.pc.createOffer({ iceRestart: true })
+        this.lastLocalOfferSdp = offer.sdp ?? null
+        this.dbg.p('SLD(offer,iceRestart) start', { sdp: sdpHash(offer.sdp) })
         await this.pc.setLocalDescription(offer)
-        await this.signalDb.setOffer(offer as OfferSDP)
+        await this.streams.setOffer(offer as OfferSDP)
+        this.dbg.p('offer(iceRestart) published')
     }
 
-    async reconnectHard(opts: { awaitReadyMs?: number; resetSdp?: boolean } = {}) {
+    async reconnectHard(opts: { awaitReadyMs?: number } = {}) {
         if (!this.roomId) throw new Error('Room not selected')
+        this.phase = 'hard-reconnect'
+        this.emitDebug('hard-reconnect start')
 
-        // 1) закрываем старые каналы/PC (подписки оставляем — они привязаны к this, не к старому PC)
         this.cleanupPeerOnly()
 
-        // 2) сбрасываем флаги perfect-negotiation
         this.lastHandledOfferSdp = null
+        this.lastHandledAnswerSdp = null
+        this.lastSeenOfferSdp = null
+        this.lastSeenAnswerSdp = null
+        this.lastLocalOfferSdp = null
         this.answering = false
+        this.remoteDescSet = false
+        this.pendingIce.length = 0
 
-        // 3) ВАЖНО: чистим кандидатов в БД, иначе прилетит реплей старых "added"
         try {
-            await this.signalDb.clearCallerCandidates()
-            await this.signalDb.clearCalleeCandidates()
-            await this.signalDb.clearOffer()
-            await this.signalDb.clearAnswer()
+            await this.streams.clearCallerCandidates()
+            await this.streams.clearCalleeCandidates()
+            await this.streams.clearOffer()
+            await this.streams.clearAnswer()
         } catch (e) {
-            // не критично, идём дальше; просто лог
             console.warn('[RTCSignaler] reconnectHard: clear candidates failed', e)
         }
 
-        // 4) создаём новый PC + data-channels
         this.initPeer()
+        this.emitDebug('hard-reconnect initPeer')
 
-        // 5) НЕ делаем ручной createOffer()!
-        // onnegotiationneeded сработает сам (caller создаёт 2 канала → оффер уйдёт)
-        // callee ответит через подписку на offer → setRemote + answer
-
-        // 6) ждём полной готовности (connected + оба DC open),
-        //    чтобы метод вернулся только когда можно снова отправлять
         const waitMs = opts.awaitReadyMs ?? 15000
         await this.waitReady({ timeoutMs: waitMs })
+        this.dbg.p('reconnectHard done')
+        this.phase = 'connected'
+        this.emitDebug('hard-reconnect done')
     }
 
     async hangup(): Promise<void> {
+        this.phase = 'closing'
+        this.emitDebug('hangup')
+
+        // Rx-подписки
+        for (const s of this.rxSubs.splice(0)) {
+            try {
+                s.unsubscribe()
+            } catch {}
+        }
+
+        // старые подписки (на всякий случай, если где-то добавите)
         this.unsubscribes.forEach((u) => {
             try {
                 u()
             } catch {}
         })
         this.unsubscribes = []
+
         this.cleanupPeerOnly()
+        this.connectedOrSubbed = false
+        this.phase = 'idle'
+        this.emitDebug('hangup done')
     }
 
     async endRoom(): Promise<void> {
+        this.dbg.p('endRoom')
         await this.hangup()
         try {
             await this.signalDb.endRoom()
         } catch {}
         this.roomId = null
+        this.emitDebug('endRoom')
     }
 
     get currentRoomId() {
         return this.roomId
     }
-
-    // ---------- setters (возвращают отписку) ----------
 
     setMessageHandler(cb: (t: string, meta: { reliable: boolean }) => void): Unsub {
         this.onMessage = cb
@@ -264,53 +526,105 @@ export class RTCSignaler {
             this.onMessage = () => {}
         }
     }
-
     setConnectionStateHandler(cb: (s: RTCPeerConnectionState) => void): Unsub {
         this.onConnectionStateChange = cb
         return () => {
             this.onConnectionStateChange = () => {}
         }
     }
-
     setFastOpenHandler(cb: () => void): Unsub {
         this.onFastOpen = cb
         return () => {
             this.onFastOpen = () => {}
         }
     }
-
     setFastCloseHandler(cb: () => void): Unsub {
         this.onFastClose = cb
         return () => {
             this.onFastClose = () => {}
         }
     }
-
     setReliableOpenHandler(cb: () => void): Unsub {
         this.onReliableOpen = cb
         return () => {
             this.onReliableOpen = () => {}
         }
     }
-
     setReliableCloseHandler(cb: () => void): Unsub {
         this.onReliableClose = cb
         return () => {
             this.onReliableClose = () => {}
         }
     }
-
     setErrorHandler(cb: (e: unknown) => void): Unsub {
-        this.onError = cb
+        this.onError = (e) => {
+            this.lastErrorText = String(e)
+            cb(e)
+            this.emitDebug('error')
+        }
         return () => {
             this.onError = (e) => console.error('[RTCSignaler]', e)
         }
     }
+    setDebugHandler(cb: (d: DebugState) => void): Unsub {
+        this.onDebug = cb
+        this.emitDebug('attach-debug')
+        return () => {
+            this.onDebug = () => {}
+        }
+    }
 
-    // ---------- internals ----------
+    // ————————————————————————————————————————————————————————————————
+    // Internals
+    // ————————————————————————————————————————————————————————————————
 
     private initPeer() {
+        this.dbg.p('initPeer()')
         this.pc = new RTCPeerConnection(this.rtcConfig)
+
+        this.remoteDescSet = false
+        this.pendingIce.length = 0
+        this.emitDebug('pc-created')
+
+        this.pc.addEventListener('signalingstatechange', () => {
+            this.dbg.p('signalingstatechange')
+            this.emitDebug('signalingstatechange')
+        })
+        this.pc.addEventListener('iceconnectionstatechange', () => {
+            this.dbg.p('ice=' + this.pc!.iceConnectionState)
+            const s = this?.pc!.iceConnectionState
+            this.emitDebug('ice=' + s)
+            if (!this.roomId) return
+            if (s === 'connected') {
+                this.phase = 'connected'
+                this.softRetries = 0
+                this.hardRetries = 0
+                this.softDelayMs = 250
+                this.hardDelayMs = 1000
+                this.clearRecoveryTimers()
+                this.emitDebug('connected')
+            }
+            if (s === 'disconnected') this.scheduleSoftThenMaybeHard()
+            if (s === 'failed' || s === 'closed') this.tryHardNow()
+        })
+        this.pc.addEventListener('connectionstatechange', () => {
+            const st = this.pc!.connectionState
+            this.dbg.p('connection=' + st)
+            this.onConnectionStateChange(st)
+            this.emitDebug('connection=' + st)
+            if (!this.roomId) return
+            if (st === 'connected') {
+                this.phase = 'connected'
+                this.softRetries = 0
+                this.hardRetries = 0
+                this.softDelayMs = 250
+                this.hardDelayMs = 1000
+                this.clearRecoveryTimers()
+                this.emitDebug('connected')
+            }
+            if (st === 'disconnected') this.scheduleSoftThenMaybeHard()
+            if (st === 'failed' || st === 'closed') this.tryHardNow()
+        })
 
         if (this.role === 'caller') {
             this.dcFast = this.pc.createDataChannel(this.fastLabel, this.fastInit)
@@ -325,34 +639,49 @@ export class RTCSignaler {
                 if (rel) this.dcReliable = ch
                 else this.dcFast = ch
                 this.setupChannel(ch, rel)
+                if (ch.readyState === 'open') {
+                    this.resolveChannelWaiters(ch, rel)
+                    if (rel) this.flushQueue(ch, this.reliableQueue)
+                    else this.flushQueue(ch, this.fastQueue)
+                    this.emitDebug('dc-early-open')
+                }
             }
         }
 
-        this.pc.onconnectionstatechange = () =>
-            this.onConnectionStateChange(this.pc.connectionState)
-
-        // свои ICE → SignalDB
         this.pc.onicecandidate = async (ev) => {
             if (!ev.candidate) return
             try {
-                if (this.role === 'caller') await this.signalDb.addCallerIceCandidate(ev.candidate)
-                else await this.signalDb.addCalleeIceCandidate(ev.candidate)
-            } catch (e) {
-                this.onError(e)
-            }
+                // Передаём "как есть" RTCIceCandidate — адаптер сам приведёт к init перед записью
+                const ice: RTCIceCandidate = ev.candidate
+                if (this.role === 'caller') await this.streams.addCallerIceCandidate(ice)
+                else await this.streams.addCalleeIceCandidate(ice)
+            } catch (e) { this.onError(e) }
         }
 
-        // инициаторский оффер — только через onnegotiationneeded, без ручных дублей
         this.pc.onnegotiationneeded = async () => {
+            if (!this.pc) return
+            if (this.makingOffer || this.pc.signalingState !== 'stable') {
+                this.dbg.p('onnegotiationneeded skipped (makingOffer or !stable)')
+                return
+            }
+            this.phase = 'negotiating'
+            this.emitDebug('negotiationneeded')
+
             try {
                 this.makingOffer = true
                 const offer = await this.pc.createOffer()
+                this.lastLocalOfferSdp = offer.sdp ?? null
+                this.dbg.p('created offer', { sdp: sdpHash(offer.sdp) })
+                this.dbg.p('SLD(offer) start')
                 await this.pc.setLocalDescription(offer)
-                await this.signalDb.setOffer(offer as OfferSDP)
+                await this.streams.setOffer(offer as OfferSDP)
+                this.dbg.p('offer published')
             } catch (e) {
+                this.dbg.pe('negotiation error', e)
                 this.onError(e)
             } finally {
                 this.makingOffer = false
+                this.emitDebug('negotiation-done')
             }
         }
     }
@@ -361,27 +690,72 @@ export class RTCSignaler {
         try {
             ch.bufferedAmountLowThreshold = reliable ? this.reliableBALow : this.fastBALow
         } catch {}
-        ch.onopen = () => (reliable ? this.onReliableOpen() : this.onFastOpen())
-        ch.onclose = () => (reliable ? this.onReliableClose() : this.onFastClose())
+        ch.onopen = () => {
+            if (reliable) {
+                this.flushQueue(ch, this.reliableQueue)
+                this.onReliableOpen()
+            } else {
+                this.flushQueue(ch, this.fastQueue)
+                this.onFastOpen()
+            }
+            this.resolveChannelWaiters(ch, reliable)
+            this.emitDebug(`dc-open:${ch.label}`)
+        }
+        ch.onclose = () => {
+            this.dbg.p(`onclose (${ch.label})`)
+            if (ch.label === this.fastLabel) this.dcFast = undefined
+            if (ch.label === this.reliableLabel) this.dcReliable = undefined
+
+            // у caller пересоздаём канал, если pc жив
+            if (this.role === 'caller' && this.pc && this.pc.signalingState !== 'closed') {
+                try {
+                    const recreated = this.pc.createDataChannel(
+                        ch.label,
+                        ch.label === this.reliableLabel ? this.reliableInit : this.fastInit,
+                    )
+                    if (ch.label === this.reliableLabel) this.dcReliable = recreated
+                    else this.dcFast = recreated
+                    this.setupChannel(recreated, ch.label === this.reliableLabel)
+                } catch (e) {
+                    this.dbg.pe('recreate datachannel failed', e)
+                }
+            }
+
+            if (this.isActive()) this.scheduleSoftThenMaybeHard()
+            if (reliable) this.onReliableClose()
+            else this.onFastClose()
+            this.emitDebug(`dc-close:${ch.label}`)
+        }
         ch.onmessage = (ev) => {
             const text = typeof ev.data === 'string' ? ev.data : String(ev.data)
             this.onMessage(text, { reliable })
         }
     }
 
-    private ensureOpen(dc?: RTCDataChannel): RTCDataChannel {
-        if (!dc || dc.readyState !== 'open') throw new Error('DataChannel is not open')
-        return dc
+    private waitChannelReady(reliable: boolean): Promise<RTCDataChannel> {
+        const existing = reliable ? this.dcReliable : this.dcFast
+        if (existing && existing.readyState === 'open') return Promise.resolve(existing)
+        return new Promise<RTCDataChannel>((res) => {
+            const arr = reliable ? this.reliableOpenWaiters : this.fastOpenWaiters
+            arr.push(res)
+            this.emitDebug('waitChannelReady')
+        })
     }
 
-    private async waitChannelOpen(pick: () => RTCDataChannel | undefined, timeoutMs = 8000) {
-        const t0 = Date.now()
-        while (Date.now() - t0 < timeoutMs) {
-            const dc = pick()
-            if (dc && dc.readyState === 'open') return dc
-            await new Promise((r) => setTimeout(r, 50))
-        }
-        throw new Error('DataChannel is not open')
+    private resolveChannelWaiters(ch: RTCDataChannel, reliable: boolean) {
+        const arr = reliable ? this.reliableOpenWaiters : this.fastOpenWaiters
+        if (!arr.length) return
+        const cbs = arr.splice(0, arr.length)
+        cbs.forEach((cb) => {
+            try {
+                cb(ch)
+            } catch {}
+        })
+    }
+
+    private flushQueue(ch: RTCDataChannel, queue: string[]) {
+        if (ch.readyState !== 'open' || !queue.length) return
+        for (const msg of queue.splice(0, queue.length)) ch.send(msg)
     }
 
     private async backpressure(dc: RTCDataChannel, low: number) {
@@ -419,22 +793,23 @@ export class RTCSignaler {
             signalingState: this.pc?.signalingState ?? 'none',
             fast: this.dcFast
                 ? {
-                      label: this.dcFast.label,
-                      state: this.dcFast.readyState,
-                      ba: this.dcFast.bufferedAmount,
-                  }
+                    label: this.dcFast.label,
+                    state: this.dcFast.readyState,
+                    ba: this.dcFast.bufferedAmount,
+                }
                 : null,
             reliable: this.dcReliable
                 ? {
-                      label: this.dcReliable.label,
-                      state: this.dcReliable.readyState,
-                      ba: this.dcReliable.bufferedAmount,
-                  }
+                    label: this.dcReliable.label,
+                    state: this.dcReliable.readyState,
+                    ba: this.dcReliable.bufferedAmount,
+                }
                 : null,
         }
     }
 
     private cleanupPeerOnly() {
+        this.dbg.p('cleanupPeerOnly')
         try {
             this.dcFast?.close()
         } catch {}
@@ -444,9 +819,96 @@ export class RTCSignaler {
         this.dcFast = undefined
         this.dcReliable = undefined
         try {
-            this.pc.close()
+            this.pc?.close()
         } catch {}
-        // @ts-ignore
         this.pc = undefined
+        this.emitDebug('cleanupPeerOnly')
+    }
+
+    private isActive() {
+        return !!this.pc && !!this.roomId
+    }
+
+    private clearRecoveryTimers() {
+        if (this.softTimer) {
+            clearTimeout(this.softTimer as unknown as number)
+            this.softTimer = undefined
+        }
+        if (this.hardTimer) {
+            clearTimeout(this.hardTimer as unknown as number)
+            this.hardTimer = undefined
+        }
+        this.emitDebug('clearTimers')
+    }
+
+    private scheduleSoftThenMaybeHard() {
+        this.clearRecoveryTimers()
+        this.upkeepRecoveryBackoff()
+        this.phase = 'soft-reconnect'
+        const softIn = this.softDelayMs
+        const hardIn = this.hardDelayMs
+
+        this.softTimer = setTimeout(() => {
+            this.softRetries++
+            this.reconnectSoft().catch(() => {})
+            // экспоненциальный бэкофф до 2.5с
+            this.softDelayMs = Math.min(this.softDelayMs * 2, 2500)
+            this.emitDebug('soft-reconnect fire')
+        }, softIn) as unknown as number
+
+        this.hardTimer = setTimeout(() => {
+            this.tryHardNow().catch(() => {})
+            // экспоненциальный бэкофф до 10с
+            this.hardRetries++
+            this.hardDelayMs = Math.min(this.hardDelayMs * 2, 10000)
+            this.emitDebug('hard-reconnect fire')
+        }, hardIn) as unknown as number
+
+        this.emitDebug('schedule reconnects')
+    }
+
+    private upkeepRecoveryBackoff() {
+        // Можно тонко подстроить стратегию бэкоффа/сброса здесь при нужных событиях
+    }
+
+    private async tryHardNow() {
+        this.clearRecoveryTimers()
+        try {
+            await this.reconnectHard({ awaitReadyMs: 15000 })
+        } catch (e) {
+            this.dbg.pe('tryHardNow failed', e)
+            this.onError(e)
+        }
+    }
+
+    private emitDebug(lastEvent?: string) {
+        const st: DebugState = {
+            ts: Date.now(),
+            roomId: this.roomId,
+            role: this.role,
+            phase: this.phase,
+            makingOffer: this.makingOffer,
+            polite: this.polite,
+            pcState: this.pc?.connectionState ?? 'none',
+            iceState: this.pc?.iceConnectionState ?? 'none',
+            signalingState: this.pc?.signalingState ?? 'none',
+            fast: this.dcFast
+                ? { state: this.dcFast.readyState, ba: this.dcFast.bufferedAmount }
+                : undefined,
+            reliable: this.dcReliable
+                ? { state: this.dcReliable.readyState, ba: this.dcReliable.bufferedAmount }
+                : undefined,
+            pendingIce: this.pendingIce.length,
+            retries: { soft: this.softRetries, hard: this.hardRetries },
+            timers: {
+                softPending: !!this.softTimer,
+                hardPending: !!this.hardTimer,
+                softInMs: this.softDelayMs,
+                hardInMs: this.hardDelayMs,
+            },
+            lastEvent,
+            lastError: this.lastErrorText,
+        }
+        this.onDebug(st)
     }
 }

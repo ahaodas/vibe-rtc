@@ -5,14 +5,16 @@
         "includes": [
             "**/*",
             "!!**/dist",
-            "!**/*.map"
+            "!**/*.map",
+            "!!**/node_modules"
         ]
     },
     "formatter": {
         "includes": [
             "**/*",
             "!!**/dist",
-            "!**/*.map"
+            "!**/*.map",
+            "!!**/node_modules"
         ],
         "enabled": true,
         "indentStyle": "space",

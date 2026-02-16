@@ -1,4 +1,10 @@
-import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app'
+import {
+    initializeApp,
+    getApps,
+    getApp,
+    type FirebaseApp,
+    type FirebaseOptions,
+} from 'firebase/app'
 import { getFirestore, type Firestore } from 'firebase/firestore'
 import {
     getAuth,
@@ -10,7 +16,6 @@ import {
     getIdToken,
     type Auth,
 } from 'firebase/auth'
-import { FirebaseOptions } from '@firebase/app'
 
 async function waitForUser(auth: Auth): Promise<string> {
     if (auth.currentUser) {

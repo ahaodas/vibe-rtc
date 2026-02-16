@@ -1,2 +1,2 @@
 export * from './types'
-export { RTCSignaler } from './RTCSignaler'
+export { RTCSignaler, type DebugState } from './RTCSignaler'
