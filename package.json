@@ -8,7 +8,8 @@
         "prepare": "husky",
         "install:all": "pnpm install -w --frozen-lockfile",
         "build:libs": "pnpm -r --filter @vibe-rtc/rtc-core --filter @vibe-rtc/rtc-firebase run build",
-        "build:all": "pnpm run build:libs",
+        "build:sdk": "pnpm --filter @vibe-rtc/sdk run build",
+        "build:all": "pnpm run build:libs && pnpm run build:sdk",
         "test:int": "pnpm --filter @vibe-rtc/rtc-firebase run test",
         "test:e2e": "pnpm --filter @vibe-rtc/rtc-e2e run test",
         "show-report": "pnpm --filter @vibe-rtc/rtc-e2e run show-report",
@@ -24,7 +25,9 @@
         "release:tag": "changeset tag",
         "release": "changeset publish",
         "release:local": "bash ./scripts/release-local.sh",
-        "release:local:publish": "bash ./scripts/release-local.sh --publish"
+        "release:local:publish": "bash ./scripts/release-local.sh --publish",
+        "release:local:gh": "bash ./scripts/release-local.sh --github-release",
+        "release:local:full": "bash ./scripts/release-local.sh --publish --github-release"
     },
     "workspaces": {
         "packages": [

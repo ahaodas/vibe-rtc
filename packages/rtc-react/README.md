@@ -12,6 +12,12 @@ pnpm add @vibe-rtc/rtc-react @vibe-rtc/rtc-core
 
 `react` is a peer dependency (`>=18`).
 
+If you prefer one package for core + react + firebase, install:
+
+```bash
+pnpm add @vibe-rtc/sdk
+```
+
 ## Provider Setup
 
 You can pass either:

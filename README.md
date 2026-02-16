@@ -13,6 +13,7 @@ Monorepo with tools for stable browser-to-browser WebRTC data connections with s
 - `@vibe-rtc/rtc-core`: transport/signaling engine, reconnect logic, typed errors.
 - `@vibe-rtc/rtc-firebase`: Firestore signaling adapter + Firebase bootstrap helpers + rules.
 - `@vibe-rtc/rtc-react`: React provider/hooks on top of `rtc-core`.
+- `@vibe-rtc/sdk`: unified package re-exporting core + react + firebase.
 - `@vibe-rtc/rtc-e2e`: Playwright E2E tests for reload/recovery scenarios.
 
 ## Workspace
@@ -21,6 +22,12 @@ Use `pnpm` (not `npm`).
 
 ```bash
 pnpm install
+```
+
+Unified install for app projects:
+
+```bash
+npm i @vibe-rtc/sdk@latest
 ```
 
 ## Common Commands

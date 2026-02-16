@@ -135,6 +135,18 @@ importers:
         specifier: ^4.0.4
         version: 4.0.4(@types/node@24.9.1)(jiti@2.6.1)(yaml@2.8.2)
 
+  packages/rtc-sdk:
+    dependencies:
+      '@vibe-rtc/rtc-core':
+        specifier: workspace:^
+        version: link:../rtc-core
+      '@vibe-rtc/rtc-firebase':
+        specifier: workspace:^
+        version: link:../rtc-firebase
+      '@vibe-rtc/rtc-react':
+        specifier: workspace:^
+        version: link:../rtc-react
+
 packages:
 
   '@babel/code-frame@7.27.1':
@@ -1533,11 +1545,13 @@ packages:
 
   glob@10.4.5:
     resolution: {integrity: sha512-7Bv8RF0k6xjo7d4A/PxYLbUCfb6c+Vpd2/mB2yRDlew7Jb5hEXiCD9ibfO7wpk8i4sevK6DFny9h7EYbM3/sHg==}
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
     hasBin: true
 
   glob@11.0.3:
     resolution: {integrity: sha512-2Nim7dha1KVkaiF4q6Dj+ngPPMdfvLJEOpZk/jKiUAkqKebpGAWQXAq9z1xu9HKu5lWfqw/FASuccEjyznjPaA==}
     engines: {node: 20 || >=22}
+    deprecated: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
     hasBin: true
 
   global-directory@4.0.1:

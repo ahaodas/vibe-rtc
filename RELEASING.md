@@ -32,8 +32,15 @@ This command:
 - runs release checks (`build:libs` + tests)
 - creates release commit `chore(release): version packages`
 - creates package tags
+- creates one meta repository tag (default format `vYYYY.MM.DD-HHMM`)
 
-Use `pnpm release:local:publish` to also run publish at the end.
+Options:
+- `pnpm release:local:publish` -> also publish to npm
+- `pnpm release:local:gh` -> also create GitHub Release (requires `gh` CLI)
+- `pnpm release:local:full` -> publish + create GitHub Release
+- custom meta tag: `bash ./scripts/release-local.sh --meta-tag v0.2.0`
+
+Recommendation: keep npm publish manual/explicit (`--publish`) to avoid accidental public releases.
 
 Manual flow (if needed):
 
