@@ -30,6 +30,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     const signalerRef = useRef<RTCSignaler | null>(null)
     const initPromiseRef = useRef<Promise<SignalDB> | null>(null)
     const autoHeartbeatStopRef = useRef<(() => void) | null>(null)
+    const roomWatchStopRef = useRef<(() => void) | null>(null)
 
     const getSignalDB = useCallback(async (): Promise<SignalDB> => {
         if (signalDbRef.current) return signalDbRef.current
@@ -103,11 +104,19 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         [getSignalDB, rtcConfiguration],
     )
 
+    const stopRoomWatch = useCallback(() => {
+        if (roomWatchStopRef.current) {
+            roomWatchStopRef.current()
+            roomWatchStopRef.current = null
+        }
+    }, [])
+
     const disposeSignaler = useCallback(async () => {
         if (autoHeartbeatStopRef.current) {
             autoHeartbeatStopRef.current()
             autoHeartbeatStopRef.current = null
         }
+        stopRoomWatch()
         const s = signalerRef.current
         signalerRef.current = null
         if (s) {
@@ -116,7 +125,44 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             } catch {}
         }
         dispatch({ type: 'SET_STATUS', status: 'disconnected' })
-    }, [])
+    }, [stopRoomWatch])
+
+    const startRoomWatch = useCallback(
+        async (roomId: string) => {
+            stopRoomWatch()
+            let alive = true
+            roomWatchStopRef.current = () => {
+                alive = false
+            }
+            const db = await getSignalDB()
+
+            const tick = async () => {
+                if (!alive) return
+                try {
+                    const room = await db.getRoom()
+                    if (!room) {
+                        alive = false
+                        roomWatchStopRef.current = null
+                        await disposeSignaler()
+                        dispatch({
+                            type: 'SET_LAST_ERROR',
+                            error: normalizeError({
+                                name: 'RTCError',
+                                code: 'ROOM_NOT_FOUND',
+                                message: 'Room no longer exists',
+                            }),
+                        })
+                        dispatch({ type: 'SET_ROOM', roomId })
+                        return
+                    }
+                } catch {}
+                if (alive) setTimeout(() => void tick(), 2000)
+            }
+
+            void tick()
+        },
+        [disposeSignaler, getSignalDB, stopRoomWatch],
+    )
 
     const createChannel = useCallback(async () => {
         await disposeSignaler()
@@ -127,12 +173,13 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             const id = await s.createRoom()
             dispatch({ type: 'SET_ROOM', roomId: id })
             await s.connect()
+            await startRoomWatch(id)
             return id
         } catch (e) {
             dispatch({ type: 'SET_LAST_ERROR', error: normalizeError(e) })
             throw e
         }
-    }, [disposeSignaler, ensureSignaler])
+    }, [disposeSignaler, ensureSignaler, startRoomWatch])
 
     const joinChannel = useCallback(
         async (roomId: string) => {
@@ -145,12 +192,13 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 await s.joinRoom(roomId)
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()
+                await startRoomWatch(roomId)
             } catch (e) {
                 dispatch({ type: 'SET_LAST_ERROR', error: normalizeError(e) })
                 throw e
             }
         },
-        [disposeSignaler, ensureSignaler],
+        [disposeSignaler, ensureSignaler, startRoomWatch],
     )
 
     const attachAsCaller = useCallback(
@@ -164,13 +212,14 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 await s.joinRoom(roomId)
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()
+                await startRoomWatch(roomId)
                 // ⚠️ УБРАН «пинок» reconnectSoft(): он вызывал гонку с onnegotiationneeded
             } catch (e) {
                 dispatch({ type: 'SET_LAST_ERROR', error: normalizeError(e) })
                 throw e
             }
         },
-        [disposeSignaler, ensureSignaler],
+        [disposeSignaler, ensureSignaler, startRoomWatch],
     )
 
     const attachAsCallee = useCallback(
@@ -184,12 +233,13 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 await s.joinRoom(roomId)
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()
+                await startRoomWatch(roomId)
             } catch (e) {
                 dispatch({ type: 'SET_LAST_ERROR', error: normalizeError(e) })
                 throw e
             }
         },
-        [disposeSignaler, ensureSignaler],
+        [disposeSignaler, ensureSignaler, startRoomWatch],
     )
 
     const attachAuto = useCallback(
@@ -238,6 +288,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 await s.joinRoom(roomId)
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()
+                await startRoomWatch(roomId)
 
                 // ⚠️ УБРАН «пинок» reconnectSoft() у caller
 
@@ -260,7 +311,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 throw e
             }
         },
-        [disposeSignaler, ensureSignaler, getSignalDB],
+        [disposeSignaler, ensureSignaler, getSignalDB, startRoomWatch],
     )
 
     const disconnect = useCallback(async () => {
@@ -268,13 +319,17 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     }, [disposeSignaler])
 
     const endRoom = useCallback(async () => {
+        stopRoomWatch()
         const s = signalerRef.current
         try {
             await s?.endRoom?.()
         } catch {}
         await disposeSignaler()
+        dispatch({ type: 'RESET_MESSAGES' })
+        dispatch({ type: 'SET_LAST_ERROR', error: undefined })
         dispatch({ type: 'SET_ROOM', roomId: null })
-    }, [disposeSignaler])
+        dispatch({ type: 'SET_STATUS', status: 'idle' })
+    }, [disposeSignaler, stopRoomWatch])
 
     const sendFast = useCallback(async (text: string) => {
         const s = signalerRef.current
@@ -345,29 +400,28 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     )
 
     if (state.booting) {
-        return (
-            <>
-                {props.renderLoading ?? (
-                    <div style={{ padding: 16, opacity: 0.7 }}>Booting signaling…</div>
-                )}
-            </>
-        )
-    }
-    if (state.bootError) {
-        return (
-            <>
-                {renderBootError ? (
-                    renderBootError(state.bootError)
-                ) : (
-                    <div style={{ padding: 16, color: 'crimson' }}>
-                        Failed to init signaling: {state.bootError.message}
-                    </div>
-                )}
-            </>
-        )
+        // Keep children mounted to avoid UI flicker during lazy signaling bootstrap.
     }
 
-    return <Ctx.Provider value={value}>{children}</Ctx.Provider>
+    return (
+        <Ctx.Provider value={value}>
+            {state.booting &&
+                (props.renderLoading ?? (
+                    <div style={{ padding: 8, opacity: 0.7, fontSize: 12 }}>
+                        Booting signaling…
+                    </div>
+                ))}
+            {state.bootError &&
+                (renderBootError ? (
+                    renderBootError(state.bootError)
+                ) : (
+                    <div style={{ padding: 8, color: 'crimson', fontSize: 12 }}>
+                        Failed to init signaling: {state.bootError.message}
+                    </div>
+                ))}
+            {children}
+        </Ctx.Provider>
+    )
 }
 
 export function useVibeRTC() {

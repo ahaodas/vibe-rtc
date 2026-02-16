@@ -38,6 +38,14 @@ describe('RTCError mapping', () => {
         })
     })
 
+    it('throws room-not-found when room does not exist on connect', async () => {
+        const s = new RTCSignaler('caller', makeDb({ getRoom: async () => null }))
+        await s.joinRoom('missing-room')
+        await expect(s.connect()).rejects.toMatchObject({
+            code: RTCErrorCode.ROOM_NOT_FOUND,
+        })
+    })
+
     it('maps DB failures on createRoom', async () => {
         const s = new RTCSignaler(
             'caller',

@@ -1,5 +1,6 @@
 export enum RTCErrorCode {
     ROOM_NOT_SELECTED = 'ROOM_NOT_SELECTED',
+    ROOM_NOT_FOUND = 'ROOM_NOT_FOUND',
     AUTH_REQUIRED = 'AUTH_REQUIRED',
     DB_UNAVAILABLE = 'DB_UNAVAILABLE',
     SIGNAL_TIMEOUT = 'SIGNAL_TIMEOUT',
@@ -59,6 +60,8 @@ function toMessage(err: unknown): string {
 function guessCodeFromMessage(msg: string, fallbackCode: RTCErrorCode): RTCErrorCode {
     const normalized = msg.toLowerCase()
     if (normalized.includes('room not selected')) return RTCErrorCode.ROOM_NOT_SELECTED
+    if (normalized.includes('room not found')) return RTCErrorCode.ROOM_NOT_FOUND
+    if (normalized.includes('no such document')) return RTCErrorCode.ROOM_NOT_FOUND
     if (normalized.includes('auth required')) return RTCErrorCode.AUTH_REQUIRED
     return fallbackCode
 }

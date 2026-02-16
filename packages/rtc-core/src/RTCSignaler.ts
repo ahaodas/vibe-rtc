@@ -259,6 +259,20 @@ export class RTCSignaler {
                 false,
             )
         }
+        try {
+            const room = await this.signalDb.getRoom()
+            if (!room) {
+                throw this.raiseError(
+                    new Error('Room not found'),
+                    RTCErrorCode.ROOM_NOT_FOUND,
+                    'room',
+                    false,
+                )
+            }
+        } catch (e) {
+            if (e instanceof RTCError) throw e
+            throw this.raiseError(e, RTCErrorCode.DB_UNAVAILABLE, 'room', true, 'connect failed')
+        }
         if (this.connectedOrSubbed) {
             this.dbg.p('connect() skipped (already connected/subscribed)')
             return
@@ -1036,12 +1050,17 @@ export class RTCSignaler {
 
     private async refreshSignalingEpoch(): Promise<boolean> {
         const before = this.signalingEpoch
-        try {
-            const room = await this.signalDb.getRoom()
-            this.acceptEpoch(room?.epoch)
-        } catch {
-            // best-effort sync
+        const room = await this.signalDb.getRoom()
+        if (!room) {
+            throw this.raiseError(
+                new Error('Room not found'),
+                RTCErrorCode.ROOM_NOT_FOUND,
+                'room',
+                false,
+                'signaling room no longer exists',
+            )
         }
+        this.acceptEpoch(room.epoch)
         return this.signalingEpoch !== before
     }
 
