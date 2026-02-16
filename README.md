@@ -6,6 +6,8 @@
 
 Monorepo with tools for stable browser-to-browser WebRTC data connections with signaling via Firebase Firestore.
 
+> Disclosure: this repository is developed with heavy use of AI assistance (OpenAI Codex).
+
 ## Packages
 
 - `@vibe-rtc/rtc-core`: transport/signaling engine, reconnect logic, typed errors.
