@@ -1,31 +1,7 @@
 // signal-rx.ts
 // Тонкая RxJS-обёртка над вашим существующим SignalDB (без переписывания адаптера)
 
-import { Observable, defer, shareReplay, finalize, map, filter, distinctUntilChanged } from 'rxjs'
-
-// ——— Типы вашего адаптера (совместим с тем, что у вас уже есть) ———
-export type Role = 'caller' | 'callee'
-
-type IceAny = RTCIceCandidate | RTCIceCandidateInit
-
-function toInit(ice: IceAny): RTCIceCandidateInit {
-    if (!ice) return {}
-    const any = ice as any
-    if (typeof any.toJSON === 'function') return any.toJSON() // Chromium
-    // Firefox/Safari уже приходят как init-структура
-    const { candidate, sdpMid, sdpMLineIndex, usernameFragment } = any
-    return { candidate, sdpMid, sdpMLineIndex, usernameFragment }
-}
-
-// ПИШЕМ В БД ВСЕГДА init-объект
-async function addCallerIceCandidate(ice: IceAny) {
-    const init = toInit(ice)
-    // ... write init в Firestore
-}
-async function addCalleeIceCandidate(ice: IceAny) {
-    const init = toInit(ice)
-    // ... write init в Firestore
-}
+import { Observable, shareReplay, map, distinctUntilChanged } from 'rxjs'
 
 export interface SignalDB {
     // управление комнатой
@@ -129,41 +105,5 @@ export function createSignalStreams(db: SignalDB) {
         createRoom: db.createRoom.bind(db),
         joinRoom: db.joinRoom.bind(db),
         endRoom: db.endRoom.bind(db),
-    }
-}
-
-// ——— Удобный «стартер» для роли в уже выбранной комнате ———
-// Он ничего не скрывает: просто подготавливает нужный remoteIce$ по роли.
-export function withRoom(db: SignalDB, role: Role, roomId: string) {
-    const s = createSignalStreams(db)
-
-    // если вы хотите «лениво» подключаться — используйте defer + joinRoom внутри эффекта
-    const join$ = defer(() => db.joinRoom(roomId))
-
-    // какие ICE считаются *remote* для данной роли
-    const remoteIce$ = role === 'caller' ? s.calleeIce$ : s.callerIce$
-
-    return {
-        // «подключение» к комнате (вызвать и подписаться, чтобы инициировать join)
-        join$,
-
-        // входящие потоки
-        offer$: s.offer$,
-        answer$: s.answer$,
-        remoteIce$,
-
-        // исходящие команды для этой роли
-        publishOffer: s.setOffer,
-        publishAnswer: s.setAnswer,
-        addLocalIce: role === 'caller' ? s.addCallerIceCandidate : s.addCalleeIceCandidate,
-
-        // чистки
-        clearOffer: s.clearOffer,
-        clearAnswer: s.clearAnswer,
-        clearLocalIce: role === 'caller' ? s.clearCallerCandidates : s.clearCalleeCandidates,
-        clearRemoteIce: role === 'caller' ? s.clearCalleeCandidates : s.clearCallerCandidates,
-
-        // управление комнатой
-        endRoom: s.endRoom,
     }
 }
