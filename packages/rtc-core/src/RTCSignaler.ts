@@ -462,15 +462,6 @@ export class RTCSignaler {
         this.remoteDescSet = false
         this.pendingIce.length = 0
 
-        try {
-            await this.streams.clearCallerCandidates()
-            await this.streams.clearCalleeCandidates()
-            await this.streams.clearOffer()
-            await this.streams.clearAnswer()
-        } catch (e) {
-            console.warn('[RTCSignaler] reconnectHard: clear candidates failed', e)
-        }
-
         this.initPeer()
         this.emitDebug('hard-reconnect initPeer')
 
@@ -484,6 +475,7 @@ export class RTCSignaler {
     async hangup(): Promise<void> {
         this.phase = 'closing'
         this.emitDebug('hangup')
+        this.clearRecoveryTimers()
 
         // Rx-подписки
         for (const s of this.rxSubs.splice(0)) {
@@ -687,6 +679,7 @@ export class RTCSignaler {
     }
 
     private setupChannel(ch: RTCDataChannel, reliable: boolean) {
+        const ownerPc = this.pc
         try {
             ch.bufferedAmountLowThreshold = reliable ? this.reliableBALow : this.fastBALow
         } catch {}
@@ -706,6 +699,12 @@ export class RTCSignaler {
             if (ch.label === this.fastLabel) this.dcFast = undefined
             if (ch.label === this.reliableLabel) this.dcReliable = undefined
 
+            // Игнорируем close от "старых" каналов после смены RTCPeerConnection.
+            if (!ownerPc || this.pc !== ownerPc) {
+                this.emitDebug(`dc-close-stale:${ch.label}`)
+                return
+            }
+
             // у caller пересоздаём канал, если pc жив
             if (this.role === 'caller' && this.pc && this.pc.signalingState !== 'closed') {
                 try {
@@ -721,7 +720,18 @@ export class RTCSignaler {
                 }
             }
 
-            if (this.isActive()) this.scheduleSoftThenMaybeHard()
+            if (this.isActive()) {
+                const ice = this.pc?.iceConnectionState
+                const conn = this.pc?.connectionState
+                const unhealthy =
+                    ice === 'disconnected' ||
+                    ice === 'failed' ||
+                    ice === 'closed' ||
+                    conn === 'disconnected' ||
+                    conn === 'failed' ||
+                    conn === 'closed'
+                if (unhealthy) this.scheduleSoftThenMaybeHard()
+            }
             if (reliable) this.onReliableClose()
             else this.onFastClose()
             this.emitDebug(`dc-close:${ch.label}`)
@@ -842,6 +852,8 @@ export class RTCSignaler {
     }
 
     private scheduleSoftThenMaybeHard() {
+        if (!this.roomId || this.phase === 'closing' || this.phase === 'idle') return
+        if (!this.pc || this.pc.signalingState === 'closed') return
         this.clearRecoveryTimers()
         this.upkeepRecoveryBackoff()
         this.phase = 'soft-reconnect'
@@ -872,6 +884,7 @@ export class RTCSignaler {
     }
 
     private async tryHardNow() {
+        if (!this.roomId || this.phase === 'closing' || this.phase === 'idle') return
         this.clearRecoveryTimers()
         try {
             await this.reconnectHard({ awaitReadyMs: 15000 })

@@ -5,7 +5,6 @@ import {
     doc,
     type DocumentReference,
     type CollectionReference,
-    addDoc,
     setDoc,
     updateDoc,
     getDoc,
@@ -32,6 +31,16 @@ const ROOM_TTL_MINUTES = 120
 
 const sanitize = <T extends Record<string, any>>(o: T): T =>
     Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
+
+const candidateDocId = (ice: RTCIceCandidateInit): string => {
+    const raw = `${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
+    let h = 2166136261
+    for (let i = 0; i < raw.length; i++) {
+        h ^= raw.charCodeAt(i)
+        h = Math.imul(h, 16777619)
+    }
+    return `c_${(h >>> 0).toString(16)}`
+}
 
 // small helper to noop "already exists" errors (in case someone uses create() elsewhere)
 const swallowAlreadyExists = async <T>(p: Promise<T>): Promise<T | void> => {
@@ -69,7 +78,8 @@ export class FBAdapter implements SignalDB {
         if (!uid) throw new Error('Auth required')
 
         // addDoc гарантирует новый id и не конфликтует
-        const ref = await addDoc(collection(this.db, ROOMS) as any, {
+        const ref = doc(collection(this.db, ROOMS) as any)
+        await setDoc(ref, {
             creatorUid: uid,
             callerUid: uid,
             calleeUid: null,
@@ -289,13 +299,15 @@ export class FBAdapter implements SignalDB {
     async addCallerIceCandidate(ice: RTCIceCandidate): Promise<void> {
         if (!this.callerCol) throw new Error('Room not selected')
         const json = sanitize(ice.toJSON())
-        await addDoc(this.callerCol, { ...json, createdAt: serverTimestamp() })
+        const ref = doc(this.callerCol, candidateDocId(json))
+        await setDoc(ref, { ...json, createdAt: serverTimestamp() }, { merge: true })
     }
 
     async addCalleeIceCandidate(ice: RTCIceCandidate): Promise<void> {
         if (!this.calleeCol) throw new Error('Room not selected')
         const json = sanitize(ice.toJSON())
-        await addDoc(this.calleeCol, { ...json, createdAt: serverTimestamp() })
+        const ref = doc(this.calleeCol, candidateDocId(json))
+        await setDoc(ref, { ...json, createdAt: serverTimestamp() }, { merge: true })
     }
 
 
