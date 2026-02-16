@@ -1,8 +1,8 @@
 // apps/demo/src/main.tsx
-import React, { useMemo } from "react";
+import React from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
+import "./styles.css";
 
 import { VibeRTCProvider } from "@vibe-rtc/rtc-react";
 import { FBAdapter, ensureFirebase } from "@vibe-rtc/rtc-firebase";
@@ -29,7 +29,7 @@ const rtcConfig = {
 
 const root = createRoot(document.getElementById("root")!);
 
-function RTCWrapper({ children }: { children: React.ReactNode }) {;
+function RTCWrapper({ children }: { children: React.ReactNode }) {
 
     // Вариант А: провайдер сам создаёт адаптер (booting/error внутри)
     const createSignalServer = async () => {
@@ -56,9 +56,7 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {;
 }
 
 root.render(
-    <BrowserRouter>
-        <RTCWrapper>
-            <App />
-        </RTCWrapper>
-    </BrowserRouter>
+    <RTCWrapper>
+        <App />
+    </RTCWrapper>
 );
