@@ -58,6 +58,8 @@ jobs:
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID || vars.VITE_FIREBASE_PROJECT_ID }}
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID || vars.VITE_FIREBASE_APP_ID }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN || vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FORCE_TURN_ONLY: ${{ secrets.VITE_FORCE_TURN_ONLY || vars.VITE_FORCE_TURN_ONLY }}
+          VITE_STUN_URLS: ${{ secrets.VITE_STUN_URLS || vars.VITE_STUN_URLS }}
           VITE_TURN_URLS: ${{ secrets.VITE_TURN_URLS || vars.VITE_TURN_URLS }}
           VITE_TURN_USERNAME: ${{ secrets.VITE_TURN_USERNAME || vars.VITE_TURN_USERNAME }}
           VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL || vars.VITE_TURN_CREDENTIAL }}
@@ -79,6 +81,11 @@ jobs:
           if [ -n "$VITE_METERED_CREDENTIAL" ] && [ -z "$VITE_METERED_USER" ]; then
             echo "Missing VITE_METERED_USER for provided VITE_METERED_CREDENTIAL"; exit 1
           fi
+          if [ "$VITE_FORCE_TURN_ONLY" = "1" ]; then
+            test -n "$VITE_TURN_URLS" || (echo "Missing VITE_TURN_URLS for VITE_FORCE_TURN_ONLY=1"; exit 1)
+            test -n "$VITE_TURN_USERNAME" || (echo "Missing VITE_TURN_USERNAME for VITE_FORCE_TURN_ONLY=1"; exit 1)
+            test -n "$VITE_TURN_CREDENTIAL" || (echo "Missing VITE_TURN_CREDENTIAL for VITE_FORCE_TURN_ONLY=1"; exit 1)
+          fi
 
       - name: Build dependencies and demo
         env:
@@ -88,6 +95,8 @@ jobs:
           VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID || vars.VITE_FIREBASE_PROJECT_ID }}
           VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID || vars.VITE_FIREBASE_APP_ID }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN || vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FORCE_TURN_ONLY: ${{ secrets.VITE_FORCE_TURN_ONLY || vars.VITE_FORCE_TURN_ONLY }}
+          VITE_STUN_URLS: ${{ secrets.VITE_STUN_URLS || vars.VITE_STUN_URLS }}
           VITE_TURN_URLS: ${{ secrets.VITE_TURN_URLS || vars.VITE_TURN_URLS }}
           VITE_TURN_USERNAME: ${{ secrets.VITE_TURN_USERNAME || vars.VITE_TURN_USERNAME }}
           VITE_TURN_CREDENTIAL: ${{ secrets.VITE_TURN_CREDENTIAL || vars.VITE_TURN_CREDENTIAL }}

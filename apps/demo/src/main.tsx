@@ -55,6 +55,7 @@ const turnServer =
               credential: turnCredential,
           } satisfies RTCIceServer)
         : null
+const turnOnlyMisconfigured = FORCE_TURN_ONLY && !turnServer
 
 const rtcIceServers: RTCIceServer[] = FORCE_TURN_ONLY
     ? turnServer
@@ -88,6 +89,12 @@ if (DEMO_CONSOLE_DEBUG) {
         iceTransportPolicy: rtcConfig.iceTransportPolicy ?? 'all',
         iceServers: rtcIceServers.map((server) => server.urls),
     })
+    if (turnOnlyMisconfigured) {
+        console.error(
+            '[vibe-rtc demo] TURN-only mode is enabled, but TURN credentials are missing. ' +
+                'Set VITE_TURN_URLS, VITE_TURN_USERNAME and VITE_TURN_CREDENTIAL.',
+        )
+    }
 }
 
 function authSnapshot(auth: {
