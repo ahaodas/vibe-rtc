@@ -52,6 +52,9 @@ const rtcConfig: RTCConfiguration = {
 }
 const BOOT_VISUAL_DELAY_MS = 0
 const PROGRESS_STEP_PX = 10
+const buildSha = import.meta.env.VITE_BUILD_SHA?.trim() || 'local-dev'
+
+console.info(`[vibe-rtc demo] build=${buildSha}`)
 
 function wait(ms: number): Promise<void> {
     return new Promise((resolve) => window.setTimeout(resolve, ms))
