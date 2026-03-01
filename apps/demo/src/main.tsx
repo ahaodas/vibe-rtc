@@ -25,14 +25,14 @@ const envTurnUrls = import.meta.env.VITE_TURN_URLS?.trim()
 const turnUrls = envTurnUrls
     ? envTurnUrls
           .split(',')
-          .map((u) => u.trim())
+          .map((u: string) => u.trim())
           .filter(Boolean)
     : defaultTurnUrls
 const envStunUrls = import.meta.env.VITE_STUN_URLS?.trim()
 const stunUrls = envStunUrls
     ? envStunUrls
           .split(',')
-          .map((u) => u.trim())
+          .map((u: string) => u.trim())
           .filter(Boolean)
     : defaultStunUrls
 
