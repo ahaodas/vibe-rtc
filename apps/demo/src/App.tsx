@@ -198,30 +198,53 @@ export function App() {
         prevOverallStatusRef.current = rtc.overallStatus
     }, [mode, rtc.overallStatus])
 
+    const createTrackWidthPx = Number.isFinite(createProgressTrackWidthPx)
+        ? createProgressTrackWidthPx
+        : 0
+    const createRatio = Number.isFinite(createProgressRatio) ? createProgressRatio : 0
     const createProgressSegmentCount = Math.max(
         1,
-        Math.floor(createProgressTrackWidthPx / PROGRESS_STEP_PX),
+        Math.floor(createTrackWidthPx / PROGRESS_STEP_PX),
     )
     const createProgressFilledSegments = Math.min(
         createProgressSegmentCount,
-        Math.floor(createProgressRatio * createProgressSegmentCount),
+        Math.floor(createRatio * createProgressSegmentCount),
     )
-    const createProgressWidthPercent =
+    const createProgressWidthPercentRaw =
         (createProgressFilledSegments / createProgressSegmentCount) * 100
+    const createProgressWidthPercent = Number.isFinite(createProgressWidthPercentRaw)
+        ? createProgressWidthPercentRaw
+        : 0
     const createProgressPercent = Math.round(createProgressWidthPercent)
+    const createProgressPercentSafe = Number.isFinite(createProgressPercent)
+        ? createProgressPercent
+        : 0
+    const createProgressWidthPercentSafe = Number.isFinite(createProgressWidthPercent)
+        ? createProgressWidthPercent
+        : 0
+    const connectTrackWidthPx = Number.isFinite(connectProgressTrackWidthPx)
+        ? connectProgressTrackWidthPx
+        : 0
+    const connectRatio = Number.isFinite(connectProgressRatio) ? connectProgressRatio : 0
     const connectProgressSegmentCount = Math.max(
         1,
-        Math.floor(connectProgressTrackWidthPx / PROGRESS_STEP_PX),
+        Math.floor(connectTrackWidthPx / PROGRESS_STEP_PX),
     )
     const connectProgressFilledSegments =
         channelReadyForMessages || rtc.overallStatus === 'error'
             ? 0
             : Math.min(
                   connectProgressSegmentCount,
-                  Math.floor(connectProgressRatio * connectProgressSegmentCount),
+                  Math.floor(connectRatio * connectProgressSegmentCount),
               )
-    const connectProgressWidthPercent =
+    const connectProgressWidthPercentRaw =
         (connectProgressFilledSegments / connectProgressSegmentCount) * 100
+    const connectProgressWidthPercent = Number.isFinite(connectProgressWidthPercentRaw)
+        ? connectProgressWidthPercentRaw
+        : 0
+    const connectProgressWidthPercentSafe = Number.isFinite(connectProgressWidthPercent)
+        ? connectProgressWidthPercent
+        : 0
 
     const createRoom = async () => {
         setCreatePending(true)
@@ -300,6 +323,10 @@ export function App() {
               : rtc.lastError
                 ? `${rtc.lastError.code ? `${rtc.lastError.code}: ` : ''}${rtc.lastError.message}`
                 : 'Ready to create room.'
+        const modalStatusText =
+            typeof rtc.overallStatusText === 'string' && rtc.overallStatusText.trim().length > 0
+                ? rtc.overallStatusText
+                : statusText
 
         return (
             <main className="demoShell demoShellInitial">
@@ -307,14 +334,14 @@ export function App() {
                     <div className="appModalBackdrop" aria-live="polite">
                         <section className="appModal">
                             <h2 className="appModalTitle">Creating room...</h2>
-                            <p className="appModalMessage">{rtc.overallStatusText}</p>
-                            <div className="appProgressMeta">{createProgressPercent}%</div>
+                            <p className="appModalMessage">{modalStatusText}</p>
+                            <div className="appProgressMeta">{createProgressPercentSafe}%</div>
                             <div
                                 ref={createProgressTrackRef}
                                 className="cs-progress-bar appProgress"
                             >
                                 <div
-                                    style={{ width: `${createProgressWidthPercent}%` }}
+                                    style={{ width: `${createProgressWidthPercentSafe}%` }}
                                     className="bars"
                                 />
                             </div>
@@ -499,7 +526,7 @@ export function App() {
                     </p>
                     <div ref={connectProgressTrackRef} className="cs-progress-bar statusProgress">
                         <div
-                            style={{ width: `${connectProgressWidthPercent}%` }}
+                            style={{ width: `${connectProgressWidthPercentSafe}%` }}
                             className="bars"
                         />
                     </div>
