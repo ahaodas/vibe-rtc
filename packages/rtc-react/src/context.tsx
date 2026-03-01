@@ -28,6 +28,7 @@ function toOverallStatus(state: VibeRTCState): VibeRTCOverallStatus {
     if (state.bootError || state.lastError) return 'error'
     if (state.booting || state.status === 'booting' || state.status === 'connecting')
         return 'connecting'
+    if (state.status === 'disconnected' && state.roomId) return 'connecting'
     if (state.status === 'connected') return 'connected'
     return 'none'
 }
@@ -133,6 +134,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         createSignalServer,
         rtcConfiguration,
         connectionStrategy,
+        lanFirstTimeoutMs,
         renderLoading,
         renderBootError,
         children,
@@ -211,7 +213,11 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         async (role: 'caller' | 'callee'): Promise<RTCSignaler> => {
             const db = await getSignalDB()
             pushOperation('system', `Creating RTCSignaler for role=${role}`, 'signaler:create')
-            const s = new RTCSignaler(role, db, { rtcConfiguration, connectionStrategy })
+            const s = new RTCSignaler(role, db, {
+                rtcConfiguration,
+                connectionStrategy,
+                lanFirstTimeoutMs,
+            })
 
             s.setConnectionStateHandler((pcState) => {
                 dispatch({ type: 'SET_STATUS', status: mapPcState(pcState) })
@@ -276,7 +282,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             signalerRef.current = s
             return s
         },
-        [getSignalDB, rtcConfiguration, connectionStrategy, pushOperation],
+        [getSignalDB, rtcConfiguration, connectionStrategy, lanFirstTimeoutMs, pushOperation],
     )
 
     const stopRoomWatch = useCallback(() => {
