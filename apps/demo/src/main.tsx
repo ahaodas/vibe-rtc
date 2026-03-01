@@ -216,9 +216,8 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
         }
         const adapter = new FBAdapter(db, auth)
         if (!DEMO_CONSOLE_DEBUG) return adapter as unknown as SignalDB
-        return wrapSignalDbWithConsoleDebug(
-            adapter as unknown as SignalDB,
-            () => authSnapshot(auth),
+        return wrapSignalDbWithConsoleDebug(adapter as unknown as SignalDB, () =>
+            authSnapshot(auth),
         )
     }
 
