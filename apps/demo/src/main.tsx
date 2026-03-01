@@ -15,6 +15,11 @@ const defaultTurnUrls = [
     'turn:a.relay.metered.ca:443',
     'turns:a.relay.metered.ca:443?transport=tcp',
 ]
+const defaultStunUrls = [
+    'stun:stun1.l.google.com:19302',
+    'stun:stun2.l.google.com:19302',
+    'stun:stun3.l.google.com:19302',
+]
 
 const envTurnUrls = import.meta.env.VITE_TURN_URLS?.trim()
 const turnUrls = envTurnUrls
@@ -23,6 +28,13 @@ const turnUrls = envTurnUrls
           .map((u) => u.trim())
           .filter(Boolean)
     : defaultTurnUrls
+const envStunUrls = import.meta.env.VITE_STUN_URLS?.trim()
+const stunUrls = envStunUrls
+    ? envStunUrls
+          .split(',')
+          .map((u) => u.trim())
+          .filter(Boolean)
+    : defaultStunUrls
 
 const turnUsername = import.meta.env.VITE_TURN_USERNAME ?? import.meta.env.VITE_METERED_USER
 const turnCredential =
@@ -30,11 +42,7 @@ const turnCredential =
 
 const rtcIceServers: RTCIceServer[] = [
     {
-        urls: [
-            'stun:stun1.l.google.com:19302',
-            'stun:stun2.l.google.com:19302',
-            'stun:stun3.l.google.com:19302',
-        ],
+        urls: stunUrls,
     },
     ...(turnUsername && turnCredential
         ? [
@@ -51,6 +59,7 @@ const rtcConfig: RTCConfiguration = {
     iceServers: rtcIceServers,
     iceCandidatePoolSize: 10,
 }
+const DEMO_LAN_FIRST_TIMEOUT_MS = 4500
 const PROGRESS_STEP_PX = 10
 const buildSha = import.meta.env.VITE_BUILD_SHA?.trim() || 'local-dev'
 const forceConsoleDebug = new URLSearchParams(window.location.search).get('debugConsole') === '1'
@@ -225,6 +234,7 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
         <VibeRTCProvider
             rtcConfiguration={rtcConfig}
             connectionStrategy="LAN_FIRST"
+            lanFirstTimeoutMs={DEMO_LAN_FIRST_TIMEOUT_MS}
             renderLoading={<BootLoadingOverlay />}
             renderBootError={(error) => (
                 <div className="appModalBackdrop" role="alert" aria-live="assertive">
