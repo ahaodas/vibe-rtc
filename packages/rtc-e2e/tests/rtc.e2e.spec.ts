@@ -163,6 +163,28 @@ async function reloadRoleStrict(page: Page, who: Who, roomId: string) {
     return await waitRoleReadyNoAssist(page, who)
 }
 
+async function reloadRoleNoWait(page: Page, who: Who, roomId: string) {
+    await page.reload()
+    await waitAppReady(page)
+
+    await page.evaluate(
+        async ({ who, roomId }) => {
+            if (who === 'caller') {
+                ;(window as unknown as E2EWindow).caller = await (
+                    window as unknown as E2EWindow
+                ).app.makeCaller()
+                await (window as unknown as E2EWindow).caller!.joinRoom(roomId)
+                return
+            }
+            ;(window as unknown as E2EWindow).callee = await (
+                window as unknown as E2EWindow
+            ).app.makeCallee()
+            await (window as unknown as E2EWindow).callee!.joinRoom(roomId)
+        },
+        { who, roomId },
+    )
+}
+
 async function cleanupPair(pCaller: Page, pCallee: Page) {
     for (const [page, who] of [
         [pCaller, 'caller'],
@@ -275,6 +297,35 @@ test.describe('reload recovery (strict no-assist)', () => {
             await assertStateConnected(pCaller, 'caller')
             await assertStateConnected(pCallee, 'callee')
             await assertPingStrict(pCallee, 'callee', pCaller, `after-caller-double-${i}`)
+        }
+    })
+
+    test('simultaneous caller+callee reload recovers', async () => {
+        for (let i = 1; i <= 2; i++) {
+            await Promise.all([
+                reloadRoleNoWait(pCaller, 'caller', roomId),
+                reloadRoleNoWait(pCallee, 'callee', roomId),
+            ])
+
+            const [callerMs, calleeMs] = await Promise.all([
+                waitRoleReadyNoAssist(pCaller, 'caller', RECOVERY_SLA_MS),
+                waitRoleReadyNoAssist(pCallee, 'callee', RECOVERY_SLA_MS),
+            ])
+
+            expect(
+                callerMs,
+                `caller simultaneous recovery #${i} must be <= ${RECOVERY_SLA_MS}ms`,
+            ).toBeLessThanOrEqual(RECOVERY_SLA_MS)
+            expect(
+                calleeMs,
+                `callee simultaneous recovery #${i} must be <= ${RECOVERY_SLA_MS}ms`,
+            ).toBeLessThanOrEqual(RECOVERY_SLA_MS)
+
+            await assertStateConnected(pCaller, 'caller')
+            await assertStateConnected(pCallee, 'callee')
+
+            await assertPingStrict(pCaller, 'caller', pCallee, `after-simultaneous-${i}-caller`)
+            await assertPingStrict(pCallee, 'callee', pCaller, `after-simultaneous-${i}-callee`)
         }
     })
 })

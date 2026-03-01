@@ -38,6 +38,7 @@ async function make(role: Who) {
 
     const log = makeLogger(role)
     const s = new RTCSignaler(role, signalDb, {
+        debug: true,
         rtcConfiguration,
     })
 
