@@ -83,7 +83,9 @@ class FakeRTCPeerConnection {
         this.listeners.set(event, next)
     }
 
-    emit(event: 'connectionstatechange' | 'iceconnectionstatechange' | 'signalingstatechange'): void {
+    emit(
+        event: 'connectionstatechange' | 'iceconnectionstatechange' | 'signalingstatechange',
+    ): void {
         for (const cb of this.listeners.get(event) ?? []) cb()
     }
 
@@ -250,7 +252,9 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         )
         stubRtcSessionDescription()
 
-        let offerCb: ((offer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void) | undefined
+        let offerCb:
+            | ((offer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void)
+            | undefined
         let answerCb:
             | ((answer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void)
             | undefined
@@ -262,11 +266,15 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
             makeDb({
                 setAnswer,
                 subscribeOnOffer: (cb) => {
-                    offerCb = cb as (offer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void
+                    offerCb = cb as (
+                        offer: RTCSessionDescriptionInit & { pcGeneration?: number },
+                    ) => void
                     return () => {}
                 },
                 subscribeOnAnswer: (cb) => {
-                    answerCb = cb as (answer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void
+                    answerCb = cb as (
+                        answer: RTCSessionDescriptionInit & { pcGeneration?: number },
+                    ) => void
                     return () => {}
                 },
             }),
@@ -306,7 +314,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         await Promise.resolve()
 
         const offerSdps = setRemoteSpy.mock.calls
-            .map(([desc]) => ((desc as RTCSessionDescriptionInit | undefined)?.sdp ?? ''))
+            .map(([desc]) => (desc as RTCSessionDescriptionInit | undefined)?.sdp ?? '')
             .filter((sdp) => sdp.includes('o=caller'))
         expect(offerSdps).toContain('v=0\r\no=caller 2 2 IN IP4 0.0.0.0\r\n')
         expect(offerSdps.length).toBeGreaterThanOrEqual(2)
@@ -321,7 +329,12 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         stubRtcSessionDescription()
 
         let answerCb:
-            | ((answer: RTCSessionDescriptionInit & { pcGeneration?: number; forPcGeneration?: number }) => void)
+            | ((
+                  answer: RTCSessionDescriptionInit & {
+                      pcGeneration?: number
+                      forPcGeneration?: number
+                  },
+              ) => void)
             | undefined
         const setRemoteSpy = vi.spyOn(FakeRTCPeerConnection.prototype, 'setRemoteDescription')
 

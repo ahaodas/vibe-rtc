@@ -6,8 +6,8 @@ import type { Subscription } from 'rxjs'
 import {
     type CandidateType,
     type ConnectionStrategy,
-    type IcePhase,
     getCandidateType,
+    type IcePhase,
     shouldAcceptCandidate,
     shouldSendCandidate,
 } from './connection-strategy'
@@ -377,7 +377,9 @@ export class RTCSignaler {
             remoteIce$.subscribe(async (c) => {
                 if (!this.acceptEpoch((c as any).epoch)) return
                 const remoteGeneration =
-                    typeof (c as any).pcGeneration === 'number' ? (c as any).pcGeneration : undefined
+                    typeof (c as any).pcGeneration === 'number'
+                        ? (c as any).pcGeneration
+                        : undefined
                 if (
                     typeof remoteGeneration === 'number' &&
                     typeof this.remotePcGeneration === 'number' &&
@@ -923,9 +925,7 @@ export class RTCSignaler {
         const connectionState = this.pc?.connectionState
         const iceState = this.pc?.iceConnectionState
         return (
-            connectionState === 'connected' ||
-            iceState === 'connected' ||
-            iceState === 'completed'
+            connectionState === 'connected' || iceState === 'connected' || iceState === 'completed'
         )
     }
 
@@ -1117,7 +1117,8 @@ export class RTCSignaler {
         this.clearLanFirstTimer()
         this.lanFirstTimer = setTimeout(() => {
             if (!this.isCurrentGeneration(generation)) return
-            if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle') return
+            if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle')
+                return
             if (this.icePhase !== 'LAN' || this.isConnectedState()) return
             this.dbg.p(`LAN timeout -> fallback to STUN in ${this.lanFirstTimeoutMs}ms`)
             this.transitionToStun('timeout')
@@ -1147,14 +1148,20 @@ export class RTCSignaler {
             this.emitDebug('selected-path:host')
             return
         }
-        if (this.candidateStats.remoteAccepted.srflx > 0 || this.candidateStats.localSent.srflx > 0) {
+        if (
+            this.candidateStats.remoteAccepted.srflx > 0 ||
+            this.candidateStats.localSent.srflx > 0
+        ) {
             this.selectedPath = 'srflx'
         } else if (
             this.candidateStats.remoteAccepted.relay > 0 ||
             this.candidateStats.localSent.relay > 0
         ) {
             this.selectedPath = 'relay'
-        } else if (this.candidateStats.remoteAccepted.host > 0 || this.candidateStats.localSent.host > 0) {
+        } else if (
+            this.candidateStats.remoteAccepted.host > 0 ||
+            this.candidateStats.localSent.host > 0
+        ) {
             this.selectedPath = 'host'
         } else {
             this.selectedPath = 'unknown'
