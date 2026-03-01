@@ -1,5 +1,6 @@
 // apps/demo/src/main.tsx
 import type React from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { App } from '@/App'
 import '@/styles.css'
@@ -49,6 +50,60 @@ const rtcConfig: RTCConfiguration = {
     iceServers: rtcIceServers,
     iceCandidatePoolSize: 10,
 }
+const BOOT_VISUAL_DELAY_MS = 0
+const PROGRESS_STEP_PX = 10
+
+function wait(ms: number): Promise<void> {
+    return new Promise((resolve) => window.setTimeout(resolve, ms))
+}
+
+function BootLoadingOverlay() {
+    const [elapsedMs, setElapsedMs] = useState(0)
+    const [trackWidthPx, setTrackWidthPx] = useState(0)
+    const progressTrackRef = useRef<HTMLDivElement | null>(null)
+
+    useEffect(() => {
+        const startedAt = Date.now()
+        const timerId = window.setInterval(() => {
+            setElapsedMs(Math.min(Date.now() - startedAt, BOOT_VISUAL_DELAY_MS))
+        }, 100)
+        return () => window.clearInterval(timerId)
+    }, [])
+
+    useEffect(() => {
+        const node = progressTrackRef.current
+        if (!node) return
+
+        const updateTrackWidth = () => {
+            setTrackWidthPx(Math.max(0, Math.floor(node.clientWidth)))
+        }
+        updateTrackWidth()
+
+        const resizeObserver = new ResizeObserver(updateTrackWidth)
+        resizeObserver.observe(node)
+        return () => resizeObserver.disconnect()
+    }, [])
+
+    const rawProgressRatio = Math.min(1, elapsedMs / BOOT_VISUAL_DELAY_MS)
+    const segmentCount = Math.max(1, Math.floor(trackWidthPx / PROGRESS_STEP_PX))
+    const filledSegments =
+        rawProgressRatio >= 1 ? segmentCount : Math.floor(rawProgressRatio * segmentCount)
+    const progressPercent = Math.round((filledSegments / segmentCount) * 100)
+    const progressWidthPercent = (filledSegments / segmentCount) * 100
+
+    return (
+        <div className="appModalBackdrop" aria-live="polite">
+            <section className="appModal">
+                <h2 className="appModalTitle">Loading signaling...</h2>
+                <p className="appModalMessage">Initializing signaling adapter and auth.</p>
+                <div className="appProgressMeta">{progressPercent}%</div>
+                <div ref={progressTrackRef} className="cs-progress-bar appProgress">
+                    <div style={{ width: `${progressWidthPercent}%` }} className="bars" />
+                </div>
+            </section>
+        </div>
+    )
+}
 
 const rootElement = document.getElementById('root')
 if (!rootElement) {
@@ -66,15 +121,25 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
             appId: import.meta.env.VITE_FIREBASE_APP_ID,
         }
         const { db, auth } = await ensureFirebase(fbConfig)
-        return new FBAdapter(db, auth)
+        const adapter = new FBAdapter(db, auth)
+        // Visual testing: keep loading modal visible 30s longer.
+        await wait(BOOT_VISUAL_DELAY_MS)
+        return adapter
     }
 
     return (
         <VibeRTCProvider
             rtcConfiguration={rtcConfig}
             connectionStrategy="LAN_FIRST"
-            renderLoading={<div>Custom boot…</div>}
-            renderBootError={(e) => <div style={{ color: 'crimson' }}>{e.message}</div>}
+            renderLoading={<BootLoadingOverlay />}
+            renderBootError={(error) => (
+                <div className="appModalBackdrop" role="alert" aria-live="assertive">
+                    <section className="appModal appModalError">
+                        <h2 className="appModalTitle">Signaling initialization failed</h2>
+                        <p className="appModalMessage">{error.message}</p>
+                    </section>
+                </div>
+            )}
             createSignalServer={createSignalServer}
         >
             {children}
