@@ -37,9 +37,9 @@ const makeChange = (
 
 const makeAdapter = () => {
     const adapter = new FBAdapter({} as never, { currentUser: { uid: 'u1' } } as never)
-    ;((adapter as unknown) as { callerCol?: unknown }).callerCol = { id: 'caller-col' }
-    ;((adapter as unknown) as { calleeCol?: unknown }).calleeCol = { id: 'callee-col' }
-    ;((adapter as unknown) as { roomEpoch: number }).roomEpoch = 7
+    ;(adapter as unknown as { callerCol?: unknown }).callerCol = { id: 'caller-col' }
+    ;(adapter as unknown as { calleeCol?: unknown }).calleeCol = { id: 'callee-col' }
+    ;(adapter as unknown as { roomEpoch: number }).roomEpoch = 7
     return adapter
 }
 
