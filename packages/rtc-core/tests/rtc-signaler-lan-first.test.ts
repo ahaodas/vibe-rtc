@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { RTCSignaler } from '../src/RTCSignaler'
 import { RTCError, RTCErrorCode } from '../src/errors'
+import { RTCSignaler } from '../src/RTCSignaler'
 import type { RoomDoc, SignalDB } from '../src/types'
 
 const makeRoom = (): RoomDoc => ({
