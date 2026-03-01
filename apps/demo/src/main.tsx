@@ -50,28 +50,14 @@ const rtcConfig: RTCConfiguration = {
     iceServers: rtcIceServers,
     iceCandidatePoolSize: 10,
 }
-const BOOT_VISUAL_DELAY_MS = 0
 const PROGRESS_STEP_PX = 10
 const buildSha = import.meta.env.VITE_BUILD_SHA?.trim() || 'local-dev'
 
 console.info(`[vibe-rtc demo] build=${buildSha}`)
 
-function wait(ms: number): Promise<void> {
-    return new Promise((resolve) => window.setTimeout(resolve, ms))
-}
-
 function BootLoadingOverlay() {
-    const [elapsedMs, setElapsedMs] = useState(0)
     const [trackWidthPx, setTrackWidthPx] = useState(0)
     const progressTrackRef = useRef<HTMLDivElement | null>(null)
-
-    useEffect(() => {
-        const startedAt = Date.now()
-        const timerId = window.setInterval(() => {
-            setElapsedMs(Math.min(Date.now() - startedAt, BOOT_VISUAL_DELAY_MS))
-        }, 100)
-        return () => window.clearInterval(timerId)
-    }, [])
 
     useEffect(() => {
         const node = progressTrackRef.current
@@ -87,12 +73,16 @@ function BootLoadingOverlay() {
         return () => resizeObserver.disconnect()
     }, [])
 
-    const rawProgressRatio = Math.min(1, elapsedMs / BOOT_VISUAL_DELAY_MS)
+    const rawProgressRatio = 1
     const segmentCount = Math.max(1, Math.floor(trackWidthPx / PROGRESS_STEP_PX))
     const filledSegments =
         rawProgressRatio >= 1 ? segmentCount : Math.floor(rawProgressRatio * segmentCount)
-    const progressPercent = Math.round((filledSegments / segmentCount) * 100)
-    const progressWidthPercent = (filledSegments / segmentCount) * 100
+    const progressWidthPercentRaw = (filledSegments / segmentCount) * 100
+    const progressWidthPercent = Number.isFinite(progressWidthPercentRaw)
+        ? progressWidthPercentRaw
+        : 0
+    const progressPercentRaw = Math.round(progressWidthPercent)
+    const progressPercent = Number.isFinite(progressPercentRaw) ? progressPercentRaw : 0
 
     return (
         <div className="appModalBackdrop" aria-live="polite">
@@ -124,10 +114,7 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
             appId: import.meta.env.VITE_FIREBASE_APP_ID,
         }
         const { db, auth } = await ensureFirebase(fbConfig)
-        const adapter = new FBAdapter(db, auth)
-        // Visual testing: keep loading modal visible 30s longer.
-        await wait(BOOT_VISUAL_DELAY_MS)
-        return adapter
+        return new FBAdapter(db, auth)
     }
 
     return (
