@@ -68,6 +68,23 @@ body {
     justify-items: start;
 }
 
+.initialInfo {
+    width: 100%;
+    border: 1px solid var(--border-light);
+    box-shadow: 1px 1px 0 var(--border-dark);
+    background: var(--bg);
+    padding: 10px;
+    display: grid;
+    gap: 8px;
+}
+
+.initialInfoText {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text);
+    line-height: 1.45;
+}
+
 .initialCard h1 {
     margin: 0;
     font-size: 22px;

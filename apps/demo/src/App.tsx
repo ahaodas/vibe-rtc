@@ -321,6 +321,29 @@ export function App() {
                 )}
                 <section className="card initialCard">
                     <h1>VIBE-RTC DEMO</h1>
+                    <section className="initialInfo">
+                        <p className="initialInfoText">
+                            This page demonstrates LAN-first WebRTC connection setup, with automatic STUN fallback when direct local
+                            candidates do not connect fast enough.
+                        </p>
+                        <p className="initialInfoText">
+                            The demo is tuned to be resilient to caller/callee page reload races:
+                            after refreshes it re-attaches, re-negotiates, and restores channels.
+                        </p>
+                        <p className="initialInfoText">
+                            How to use:
+                            <br />
+                            1. Press <b>Create Room</b>.
+                            <br />
+                            2. Open the callee link/QR on a second device.
+                            <br />
+                            3. Wait until channels are ready, then send test messages with{' '}
+                            <b>Fast</b> and <b>Reliable</b>.
+                            <br />
+                            4. Watch status, progress bars, and operation log to inspect signaling
+                            and WebRTC state transitions.
+                        </p>
+                    </section>
                     <button
                         type="button"
                         className="cs-btn"
@@ -330,7 +353,6 @@ export function App() {
                         {createPending ? 'Creating...' : 'Create Room'}
                     </button>
                     <hr className="cs-hr" />
-                    <p className={`statusLine status-${rtc.overallStatus}`}>{statusText}</p>
                     <p className="credits">
                         UI skin powered by{' '}
                         <a
