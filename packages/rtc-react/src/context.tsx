@@ -348,6 +348,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     const createChannel = useCallback(async () => {
         await disposeSignaler()
         dispatch({ type: 'RESET_MESSAGES' })
+        dispatch({ type: 'SET_LAST_ERROR', error: undefined })
         dispatch({ type: 'SET_STATUS', status: 'connecting' })
         pushOperation('signaling', 'Starting caller flow: create room', 'create-channel:start')
         try {
@@ -380,6 +381,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             if (!roomId) throw new Error('[rtc-react] joinChannel(roomId) requires roomId')
             await disposeSignaler()
             dispatch({ type: 'RESET_MESSAGES' })
+            dispatch({ type: 'SET_LAST_ERROR', error: undefined })
             dispatch({ type: 'SET_STATUS', status: 'connecting' })
             pushOperation(
                 'signaling',
@@ -416,6 +418,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             if (!roomId) throw new Error('[rtc-react] attachAsCaller(roomId) requires roomId')
             await disposeSignaler()
             dispatch({ type: 'RESET_MESSAGES' })
+            dispatch({ type: 'SET_LAST_ERROR', error: undefined })
             dispatch({ type: 'SET_STATUS', status: 'connecting' })
             pushOperation('signaling', `Attach as caller to room ${roomId}`, 'attach-caller:start')
             try {
@@ -445,6 +448,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             if (!roomId) throw new Error('[rtc-react] attachAsCallee(roomId) requires roomId')
             await disposeSignaler()
             dispatch({ type: 'RESET_MESSAGES' })
+            dispatch({ type: 'SET_LAST_ERROR', error: undefined })
             dispatch({ type: 'SET_STATUS', status: 'connecting' })
             pushOperation('signaling', `Attach as callee to room ${roomId}`, 'attach-callee:start')
             try {
@@ -475,6 +479,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
 
             await disposeSignaler()
             dispatch({ type: 'RESET_MESSAGES' })
+            dispatch({ type: 'SET_LAST_ERROR', error: undefined })
             dispatch({ type: 'SET_STATUS', status: 'connecting' })
             pushOperation(
                 'signaling',
@@ -556,6 +561,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     const disconnect = useCallback(async () => {
         pushOperation('system', 'Manual disconnect requested', 'disconnect')
         await disposeSignaler()
+        dispatch({ type: 'SET_LAST_ERROR', error: undefined })
     }, [disposeSignaler, pushOperation])
 
     const endRoom = useCallback(async () => {
@@ -596,6 +602,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     const reconnectSoft = useCallback(async () => {
         const s = signalerRef.current
         if (!s) throw new Error('[rtc-react] Not connected')
+        dispatch({ type: 'SET_LAST_ERROR', error: undefined })
         pushOperation('webrtc', 'Soft reconnect requested', 'reconnect:soft')
         await s.reconnectSoft()
     }, [pushOperation])
@@ -604,6 +611,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         async (opts?: { awaitReadyMs?: number }) => {
             const s = signalerRef.current
             if (!s) throw new Error('[rtc-react] Not connected')
+            dispatch({ type: 'SET_LAST_ERROR', error: undefined })
             pushOperation('webrtc', 'Hard reconnect requested', 'reconnect:hard')
             await s.reconnectHard(opts)
         },
@@ -674,18 +682,8 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
 
     return (
         <Ctx.Provider value={value}>
-            {state.booting &&
-                (renderLoading ?? (
-                    <div style={{ padding: 8, opacity: 0.7, fontSize: 12 }}>Booting signaling…</div>
-                ))}
-            {state.bootError &&
-                (renderBootError ? (
-                    renderBootError(state.bootError)
-                ) : (
-                    <div style={{ padding: 8, color: 'crimson', fontSize: 12 }}>
-                        Failed to init signaling: {state.bootError.message}
-                    </div>
-                ))}
+            {state.booting && renderLoading}
+            {state.bootError && renderBootError?.(state.bootError)}
             {children}
         </Ctx.Provider>
     )
