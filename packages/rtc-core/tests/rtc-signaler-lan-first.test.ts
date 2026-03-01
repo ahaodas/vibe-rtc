@@ -320,6 +320,48 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         expect(offerSdps.length).toBeGreaterThanOrEqual(2)
     })
 
+    it('rebuilds callee peer when remote offer generation is ahead in STUN phase', async () => {
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+        stubRtcSessionDescription()
+
+        let offerCb:
+            | ((offer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void)
+            | undefined
+
+        const signaler = new RTCSignaler(
+            'callee',
+            makeDb({
+                subscribeOnOffer: (cb) => {
+                    offerCb = cb as (
+                        offer: RTCSessionDescriptionInit & { pcGeneration?: number },
+                    ) => void
+                    return () => {}
+                },
+            }),
+            {
+                connectionStrategy: 'DEFAULT',
+            },
+        )
+
+        await signaler.joinRoom('room-callee-generation-sync')
+        await signaler.connect()
+        expect(FakeRTCPeerConnection.instances.length).toBe(1)
+
+        offerCb?.({
+            type: 'offer',
+            sdp: 'v=0\r\no=caller 3 3 IN IP4 0.0.0.0\r\n',
+            pcGeneration: 2,
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        expect(FakeRTCPeerConnection.instances.length).toBe(2)
+    })
+
     it('caller ignores stale answers by forPcGeneration marker', async () => {
         vi.useFakeTimers()
         vi.stubGlobal(

@@ -482,7 +482,7 @@ export class RTCSignaler {
                         typeof (offer as any).pcGeneration === 'number'
                             ? (offer as any).pcGeneration
                             : undefined
-                    this.maybePromoteCalleeToStun(remoteGeneration)
+                    this.maybeSyncCalleeToRemoteOfferGeneration(remoteGeneration)
                     localGeneration = this.pcGeneration
                     if (
                         typeof remoteGeneration === 'number' &&
@@ -1047,13 +1047,33 @@ export class RTCSignaler {
         this.emitDebug('phase=STUN')
     }
 
-    private maybePromoteCalleeToStun(remoteGeneration: number | undefined) {
-        if (this.connectionStrategy !== 'LAN_FIRST') return
+    private maybeSyncCalleeToRemoteOfferGeneration(remoteGeneration: number | undefined) {
         if (this.role !== 'callee') return
-        if (this.icePhase !== 'LAN') return
         if (typeof remoteGeneration !== 'number') return
         if (remoteGeneration <= this.pcGeneration) return
-        this.transitionToStun('remote-offer-generation')
+        if (this.connectionStrategy === 'LAN_FIRST' && this.icePhase === 'LAN') {
+            this.transitionToStun('remote-offer-generation')
+            return
+        }
+
+        this.dbg.p(
+            `remote offer generation=${remoteGeneration} ahead of local=${this.pcGeneration} -> rebuild callee peer`,
+        )
+        this.emitDebug('peer-rebuild:remote-offer-generation')
+
+        this.controlledPeerRebuild = true
+        try {
+            this.makingOffer = false
+            this.answering = false
+            this.resetNegotiationStateForPeerRebuild()
+            this.clearLanFirstTimer()
+            this.clearConnectingWatchdogTimer()
+            this.connectingWatchdogGeneration = undefined
+            this.cleanupPeerOnly()
+            this.initPeer()
+        } finally {
+            this.controlledPeerRebuild = false
+        }
     }
 
     private async publishOfferIfStable(
