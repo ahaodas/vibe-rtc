@@ -37,15 +37,15 @@ export interface VibeRTCState {
 
 export interface VibeRTCContextValue extends VibeRTCState {
     signaler?: RTCSignaler | null
-    /** Создать комнату как caller; вернёт roomId и подключится */
+    /** Create a room as caller; returns roomId and connects */
     createChannel: () => Promise<string>
-    /** Присоединиться к существующей комнате как callee и подключиться */
+    /** Join an existing room as callee and connect */
     joinChannel: (roomId: string) => Promise<void>
-    /** Мягко разорвать соединение (оставляя комнату) */
+    /** Soft disconnect while keeping the room */
     disconnect: () => Promise<void>
-    /** Полностью завершить комнату (если вы инициатор/имеете права) */
+    /** Fully end the room (if you are initiator/have permissions) */
     endRoom: () => Promise<void>
-    /** Отправка сообщений */
+    /** Message sending */
     sendFast: (text: string) => Promise<void>
     sendReliable: (text: string) => Promise<void>
     reconnectSoft: () => Promise<void>
@@ -55,23 +55,23 @@ export interface VibeRTCContextValue extends VibeRTCState {
     attachAuto(
         roomId: string,
         opts?: { allowTakeOver?: boolean; staleMs?: number },
-    ): Promise<(() => void) | void>
+    ): Promise<(() => void) | undefined>
 }
 
 export interface VibeRTCProviderProps {
-    /** Готовый адаптер сигналинга */
+    /** Prebuilt signaling adapter */
     signalServer?: SignalDB | null
-    /** Фабрика для отложенной инициализации адаптера (провайдер сам покажет booting/error) */
+    /** Factory for lazy adapter init (provider renders booting/error states itself) */
     createSignalServer?: () => Promise<SignalDB>
-    /** RTC конфиг для PeerConnection */
+    /** RTC config for PeerConnection */
     rtcConfiguration?: RTCConfiguration
     /** ICE connection strategy (`LAN_FIRST` by default in rtc-core) */
     connectionStrategy?: ConnectionStrategy
 
-    /** Кастомный компонент/узел загрузки */
+    /** Custom loading component/node */
     renderLoading?: React.ReactNode
-    /** Кастомный рендер ошибки бута */
+    /** Custom boot error renderer */
     renderBootError?: (err: VibeRTCError) => React.ReactNode
-    /** Дети */
+    /** Children */
     children: React.ReactNode
 }

@@ -50,10 +50,14 @@ const rtcConfig: RTCConfiguration = {
     iceCandidatePoolSize: 10,
 }
 
-const root = createRoot(document.getElementById('root')!)
+const rootElement = document.getElementById('root')
+if (!rootElement) {
+    throw new Error('Root element "#root" not found')
+}
+const root = createRoot(rootElement)
 
 function RTCWrapper({ children }: { children: React.ReactNode }) {
-    // Вариант А: провайдер сам создаёт адаптер (booting/error внутри)
+    // Option A: provider creates the adapter itself (booting/error handled internally).
     const createSignalServer = async () => {
         const fbConfig = {
             apiKey: import.meta.env.VITE_FIREBASE_API_KEY,

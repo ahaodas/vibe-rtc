@@ -11,6 +11,11 @@ const firebaseConfig = {
 }
 
 type Who = 'caller' | 'callee'
+type AppApi = {
+    makeCaller: () => Promise<ReturnType<typeof make> extends Promise<infer T> ? T : never>
+    makeCallee: () => Promise<ReturnType<typeof make> extends Promise<infer T> ? T : never>
+}
+type E2EWindow = Window & { app: AppApi }
 
 const rtcConfiguration: RTCConfiguration = {
     iceServers: [
@@ -42,12 +47,12 @@ async function make(role: Who) {
         rtcConfiguration,
     })
 
-    // базовые хэндлеры (чтобы в консоли было видно стейты)
+    // Basic handlers so states are visible in console.
     s.setMessageHandler((t) => log.msg(t))
     s.setConnectionStateHandler((st) => log.state(st))
     s.setErrorHandler((e) => log.err(e))
 
-    // inbox для тестов
+    // Inbox for tests.
     let inbox: string[] = []
     s.setMessageHandler((t) => inbox.push(t))
 
@@ -80,7 +85,7 @@ async function make(role: Who) {
             await s.connect()
         },
 
-        // тестовые хелперы
+        // Test helpers.
         waitReadyNoAssist,
         waitReady: (ms = 15000) => s.waitReady({ timeoutMs: ms }),
         sendFast: (m: string) => s.sendFast(m),
@@ -101,7 +106,7 @@ async function make(role: Who) {
     }
 }
 
-;(window as any).app = {
+;(window as E2EWindow).app = {
     makeCaller: () => make('caller'),
     makeCallee: () => make('callee'),
 }

@@ -1,6 +1,6 @@
 import { RTCSignaler, type SignalDB } from '@vibe-rtc/rtc-core'
 import type { PropsWithChildren } from 'react'
-import React, {
+import {
     createContext,
     useCallback,
     useContext,
@@ -13,6 +13,18 @@ import { initialState, mapPcState, normalizeError, reducer } from './state'
 import type { TimedMessage, VibeRTCContextValue, VibeRTCProviderProps } from './types'
 
 const Ctx = createContext<VibeRTCContextValue | null>(null)
+
+type SignalDBWithPresenceOps = SignalDB & {
+    auth?: {
+        currentUser?: {
+            uid?: string | null
+        }
+    }
+    claimCallerIfFree?: () => Promise<boolean>
+    claimCalleeIfFree?: () => Promise<boolean>
+    tryTakeOver?: (role: 'caller' | 'callee', staleMs: number) => Promise<boolean>
+    heartbeat?: (role: 'caller' | 'callee') => Promise<void>
+}
 
 export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) {
     const {
@@ -214,7 +226,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()
                 await startRoomWatch(roomId)
-                // ⚠️ УБРАН «пинок» reconnectSoft(): он вызывал гонку с onnegotiationneeded
+                // reconnectSoft "nudge" removed: it caused a race with onnegotiationneeded.
             } catch (e) {
                 dispatch({ type: 'SET_LAST_ERROR', error: normalizeError(e) })
                 throw e
@@ -254,30 +266,31 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
 
             try {
                 const db = await getSignalDB()
+                const dbWithPresence = db as SignalDBWithPresenceOps
                 await db.joinRoom(roomId)
 
                 const room = await db.getRoom()
                 if (!room) throw new Error('Room not found')
 
-                const meUid = (db as any)?.auth?.currentUser?.uid ?? null
+                const meUid = dbWithPresence.auth?.currentUser?.uid ?? null
 
                 let role: 'caller' | 'callee' | null = null
 
                 if (meUid && room.callerUid === meUid) role = 'caller'
                 else if (meUid && room.calleeUid === meUid) role = 'callee'
                 else {
-                    const asCaller = await (db as any).claimCallerIfFree?.()
+                    const asCaller = await dbWithPresence.claimCallerIfFree?.()
                     if (asCaller) role = 'caller'
                     else {
-                        const asCallee = await (db as any).claimCalleeIfFree?.()
+                        const asCallee = await dbWithPresence.claimCalleeIfFree?.()
                         if (asCallee) role = 'callee'
                     }
 
                     if (!role && opts?.allowTakeOver) {
-                        const tookCallee = await (db as any).tryTakeOver?.('callee', staleMs)
+                        const tookCallee = await dbWithPresence.tryTakeOver?.('callee', staleMs)
                         if (tookCallee) role = 'callee'
                         else {
-                            const tookCaller = await (db as any).tryTakeOver?.('caller', staleMs)
+                            const tookCaller = await dbWithPresence.tryTakeOver?.('caller', staleMs)
                             if (tookCaller) role = 'caller'
                         }
                     }
@@ -291,13 +304,13 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 await s.connect()
                 await startRoomWatch(roomId)
 
-                // ⚠️ УБРАН «пинок» reconnectSoft() у caller
+                // reconnectSoft "nudge" removed for caller.
 
                 let alive = true
                 ;(async function beat() {
                     while (alive) {
                         try {
-                            await (db as any).heartbeat?.(role)
+                            await dbWithPresence.heartbeat?.(role)
                         } catch {}
                         await new Promise((r) => setTimeout(r, 15_000))
                     }
@@ -407,7 +420,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     return (
         <Ctx.Provider value={value}>
             {state.booting &&
-                (props.renderLoading ?? (
+                (renderLoading ?? (
                     <div style={{ padding: 8, opacity: 0.7, fontSize: 12 }}>Booting signaling…</div>
                 ))}
             {state.bootError &&

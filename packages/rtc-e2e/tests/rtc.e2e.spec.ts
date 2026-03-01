@@ -116,14 +116,18 @@ async function bootPair(pCaller: Page, pCallee: Page, baseURL: string) {
         ;(window as unknown as E2EWindow).caller = await (
             window as unknown as E2EWindow
         ).app.makeCaller()
-        return await (window as unknown as E2EWindow).caller!.hostRoom()
+        const caller = (window as unknown as E2EWindow).caller
+        if (!caller) throw new Error('caller role is missing after makeCaller')
+        return await caller.hostRoom()
     })
 
     await pCallee.evaluate(async (rid) => {
         ;(window as unknown as E2EWindow).callee = await (
             window as unknown as E2EWindow
         ).app.makeCallee()
-        await (window as unknown as E2EWindow).callee!.joinRoom(rid)
+        const callee = (window as unknown as E2EWindow).callee
+        if (!callee) throw new Error('callee role is missing after makeCallee')
+        await callee.joinRoom(rid)
     }, roomId)
 
     await Promise.all([
@@ -149,13 +153,17 @@ async function reloadRoleStrict(page: Page, who: Who, roomId: string) {
                 ;(window as unknown as E2EWindow).caller = await (
                     window as unknown as E2EWindow
                 ).app.makeCaller()
-                await (window as unknown as E2EWindow).caller!.joinRoom(roomId)
+                const caller = (window as unknown as E2EWindow).caller
+                if (!caller) throw new Error('caller role is missing after reload')
+                await caller.joinRoom(roomId)
                 return
             }
             ;(window as unknown as E2EWindow).callee = await (
                 window as unknown as E2EWindow
             ).app.makeCallee()
-            await (window as unknown as E2EWindow).callee!.joinRoom(roomId)
+            const callee = (window as unknown as E2EWindow).callee
+            if (!callee) throw new Error('callee role is missing after reload')
+            await callee.joinRoom(roomId)
         },
         { who, roomId },
     )
@@ -173,13 +181,17 @@ async function reloadRoleNoWait(page: Page, who: Who, roomId: string) {
                 ;(window as unknown as E2EWindow).caller = await (
                     window as unknown as E2EWindow
                 ).app.makeCaller()
-                await (window as unknown as E2EWindow).caller!.joinRoom(roomId)
+                const caller = (window as unknown as E2EWindow).caller
+                if (!caller) throw new Error('caller role is missing after reload')
+                await caller.joinRoom(roomId)
                 return
             }
             ;(window as unknown as E2EWindow).callee = await (
                 window as unknown as E2EWindow
             ).app.makeCallee()
-            await (window as unknown as E2EWindow).callee!.joinRoom(roomId)
+            const callee = (window as unknown as E2EWindow).callee
+            if (!callee) throw new Error('callee role is missing after reload')
+            await callee.joinRoom(roomId)
         },
         { who, roomId },
     )
@@ -210,7 +222,10 @@ test.describe('reload recovery (strict no-assist)', () => {
     test.beforeEach(async ({ context, baseURL }) => {
         pCaller = await context.newPage()
         pCallee = await context.newPage()
-        roomId = await bootPair(pCaller, pCallee, baseURL!)
+        if (!baseURL) {
+            throw new Error('Playwright baseURL is required for rtc e2e tests')
+        }
+        roomId = await bootPair(pCaller, pCallee, baseURL)
     })
 
     test.afterEach(async () => {
