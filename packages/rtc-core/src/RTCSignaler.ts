@@ -1661,6 +1661,15 @@ export class RTCSignaler {
         try {
             await this.reconnectHard({ awaitReadyMs: this.defaultWaitReadyTimeoutMs })
         } catch (e) {
+            if (
+                e instanceof RTCError &&
+                e.code === RTCErrorCode.WAIT_READY_TIMEOUT &&
+                e.phase === 'transport'
+            ) {
+                this.dbg.p('tryHardNow waitReady timeout (suppressed)')
+                this.emitDebug('hard-reconnect:wait-ready-timeout')
+                return
+            }
             this.dbg.pe('tryHardNow failed', e)
             this.onError(
                 this.raiseError(

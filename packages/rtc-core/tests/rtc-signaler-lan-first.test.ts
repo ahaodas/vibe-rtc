@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { RTCSignaler } from '../src/RTCSignaler'
+import { RTCError, RTCErrorCode } from '../src/errors'
 import type { RoomDoc, SignalDB } from '../src/types'
 
 const makeRoom = (): RoomDoc => ({
@@ -302,6 +303,39 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         pc.emit('connectionstatechange')
         await vi.advanceTimersByTimeAsync(25_100)
         expect(reconnectHard).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not surface WAIT_READY_TIMEOUT from automatic hard reconnect', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'DEFAULT',
+        })
+        const onError = vi.fn()
+        signaler.setErrorHandler(onError)
+
+        await signaler.joinRoom('room-hard-timeout-suppressed')
+        await signaler.connect()
+
+        ;(signaler as any).reconnectHard = vi.fn().mockRejectedValue(
+            new RTCError(RTCErrorCode.WAIT_READY_TIMEOUT, {
+                message: 'waitReady timeout',
+                phase: 'transport',
+                retriable: true,
+            }),
+        )
+
+        const pc = FakeRTCPeerConnection.instances[0]
+        pc.connectionState = 'failed'
+        pc.emit('connectionstatechange')
+        await Promise.resolve()
+        await Promise.resolve()
+
+        expect(onError).toHaveBeenCalledTimes(0)
     })
 
     it('does not poison remote generation from echoed answer', async () => {
