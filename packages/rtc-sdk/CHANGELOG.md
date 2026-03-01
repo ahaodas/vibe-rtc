@@ -1,5 +1,14 @@
 # @vibe-rtc/sdk
 
+## 0.1.2
+
+### Patch Changes
+
+- Updated dependencies [c4b7cb6]
+  - @vibe-rtc/rtc-core@0.2.0
+  - @vibe-rtc/rtc-react@0.2.0
+  - @vibe-rtc/rtc-firebase@0.1.1
+
 ## 0.1.1
 
 ### Patch Changes
