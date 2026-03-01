@@ -269,7 +269,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         await vi.advanceTimersByTimeAsync(6_600)
         expect(reconnectHard).toHaveBeenCalledTimes(0)
 
-        await vi.advanceTimersByTimeAsync(18_600)
+        await vi.advanceTimersByTimeAsync(23_600)
         expect(reconnectHard).toHaveBeenCalledTimes(1)
     })
 
@@ -293,15 +293,15 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         pc.connectionState = 'connecting'
 
         pc.emit('connectionstatechange')
-        await vi.advanceTimersByTimeAsync(25_100)
+        await vi.advanceTimersByTimeAsync(30_100)
         expect(reconnectHard).toHaveBeenCalledTimes(1)
 
         pc.emit('connectionstatechange')
-        await vi.advanceTimersByTimeAsync(25_100)
+        await vi.advanceTimersByTimeAsync(30_100)
         expect(reconnectHard).toHaveBeenCalledTimes(2)
 
         pc.emit('connectionstatechange')
-        await vi.advanceTimersByTimeAsync(25_100)
+        await vi.advanceTimersByTimeAsync(30_100)
         expect(reconnectHard).toHaveBeenCalledTimes(2)
     })
 

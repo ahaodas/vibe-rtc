@@ -57,7 +57,7 @@ function mkDbg(ctx: {
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
 const CONNECTING_WATCHDOG_MS_LAN = 6500
-const CONNECTING_WATCHDOG_MS_STUN = 25_000
+const CONNECTING_WATCHDOG_MS_STUN = 30_000
 const MAX_STUN_WATCHDOG_RECONNECTS = 2
 
 type Unsub = () => void
