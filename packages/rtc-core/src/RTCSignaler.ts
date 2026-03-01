@@ -56,7 +56,9 @@ function mkDbg(ctx: {
 }
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
-const CONNECTING_WATCHDOG_MS = 6500
+const CONNECTING_WATCHDOG_MS_LAN = 6500
+const CONNECTING_WATCHDOG_MS_STUN = 25_000
+const MAX_STUN_WATCHDOG_RECONNECTS = 2
 
 type Unsub = () => void
 export type Role = 'caller' | 'callee'
@@ -177,6 +179,7 @@ export class RTCSignaler {
     private hardTimer?: number
     private connectingWatchdogTimer?: number
     private connectingWatchdogGeneration?: number
+    private stunWatchdogReconnects = 0
     private softDelayMs = 250
     private hardDelayMs = 6000
     private softRetries = 0
@@ -357,6 +360,7 @@ export class RTCSignaler {
         this.connectedOrSubbed = true
         this.selectedPath = undefined
         this.remotePcGeneration = undefined
+        this.stunWatchdogReconnects = 0
         this.candidateStats = {
             localSeen: this.makeCandidateCountMap(),
             localSent: this.makeCandidateCountMap(),
@@ -957,6 +961,9 @@ export class RTCSignaler {
         if (this.connectingWatchdogGeneration === generation) return
         this.connectingWatchdogGeneration = generation
         this.clearConnectingWatchdogTimer()
+        const watchdogTimeoutMs =
+            this.icePhase === 'STUN' ? CONNECTING_WATCHDOG_MS_STUN : CONNECTING_WATCHDOG_MS_LAN
+        this.dbg.p(`connecting watchdog armed (${reason}) in ${watchdogTimeoutMs}ms`)
         this.connectingWatchdogTimer = setTimeout(() => {
             void (async () => {
                 this.connectingWatchdogTimer = undefined
@@ -964,6 +971,18 @@ export class RTCSignaler {
                     return
                 if (!this.isCurrentGeneration(generation)) return
                 if (this.isConnectedState() || this.areDataChannelsOpen()) return
+                await this.logIceDiagnostics(`watchdog:${reason}`, generation)
+                if (
+                    this.icePhase === 'STUN' &&
+                    this.stunWatchdogReconnects >= MAX_STUN_WATCHDOG_RECONNECTS
+                ) {
+                    this.dbg.p(
+                        `connecting watchdog reached STUN reconnect limit (${MAX_STUN_WATCHDOG_RECONNECTS}), no hard reconnect`,
+                    )
+                    this.emitDebug('connecting-watchdog:stun-max-reached')
+                    return
+                }
+                if (this.icePhase === 'STUN') this.stunWatchdogReconnects += 1
                 this.dbg.p(`connecting watchdog -> reconnectHard (${reason})`)
                 this.emitDebug('connecting-watchdog:hard-reconnect')
                 try {
@@ -976,7 +995,7 @@ export class RTCSignaler {
                     }
                 }
             })()
-        }, CONNECTING_WATCHDOG_MS) as unknown as number
+        }, watchdogTimeoutMs) as unknown as number
     }
 
     private scheduleCallerDcRecovery(generation: number, reason: string) {
@@ -1031,6 +1050,7 @@ export class RTCSignaler {
         this.dbg.p(`LAN -> STUN transition (${reason})`)
         this.emitDebug(`phase-transition:LAN->STUN:${reason}`)
         this.icePhase = 'STUN'
+        this.stunWatchdogReconnects = 0
         this.controlledPeerRebuild = true
         try {
             this.makingOffer = false
@@ -1226,6 +1246,7 @@ export class RTCSignaler {
                 this.hardRetries = 0
                 this.softDelayMs = 250
                 this.hardDelayMs = 6000
+                this.stunWatchdogReconnects = 0
                 this.clearRecoveryTimers()
                 this.clearLanFirstTimer()
                 this.captureSelectedPath()
@@ -1243,9 +1264,21 @@ export class RTCSignaler {
                 this.emitDebug('ice=completed')
             }
             if (s === 'checking') this.scheduleCallerConnectingWatchdog(generation, 'ice=checking')
+            if (s === 'failed') void this.logIceDiagnostics('ice=failed', generation)
             if (this.controlledPeerRebuild) return
             if (this.role === 'caller' && s === 'disconnected') this.scheduleSoftThenMaybeHard()
             if (this.role === 'caller' && (s === 'failed' || s === 'closed')) this.tryHardNow()
+        })
+        this.pc.addEventListener('icecandidateerror', (event: any) => {
+            if (!this.isCurrentGeneration(generation)) return
+            this.dbg.p('icecandidateerror', {
+                address: event?.address ?? null,
+                port: event?.port ?? null,
+                url: event?.url ?? null,
+                errorCode: event?.errorCode ?? null,
+                errorText: event?.errorText ?? null,
+            })
+            this.emitDebug(`ice-candidate-error:${event?.errorCode ?? 'unknown'}`)
         })
         this.pc.addEventListener('connectionstatechange', () => {
             if (!this.isCurrentGeneration(generation)) return
@@ -1260,6 +1293,7 @@ export class RTCSignaler {
                 this.hardRetries = 0
                 this.softDelayMs = 250
                 this.hardDelayMs = 6000
+                this.stunWatchdogReconnects = 0
                 this.clearRecoveryTimers()
                 this.clearLanFirstTimer()
                 this.captureSelectedPath()
@@ -1270,6 +1304,7 @@ export class RTCSignaler {
             }
             if (st === 'connecting')
                 this.scheduleCallerConnectingWatchdog(generation, 'connection=connecting')
+            if (st === 'failed') void this.logIceDiagnostics('connection=failed', generation)
             if (this.controlledPeerRebuild) return
             if (this.role === 'caller' && st === 'disconnected') this.scheduleSoftThenMaybeHard()
             if (this.role === 'caller' && (st === 'failed' || st === 'closed')) this.tryHardNow()
@@ -1520,6 +1555,70 @@ export class RTCSignaler {
             this.hardTimer = undefined
         }
         this.emitDebug('clearTimers')
+    }
+
+    private async logIceDiagnostics(reason: string, generation: number) {
+        if (!this.debugEnabled) return
+        if (!this.pc) return
+        if (!this.isCurrentGeneration(generation)) return
+        if (typeof this.pc.getStats !== 'function') return
+        try {
+            const stats = await this.pc.getStats()
+            if (!this.pc) return
+            if (!this.isCurrentGeneration(generation)) return
+
+            const localCandidates = new Map<string, any>()
+            const remoteCandidates = new Map<string, any>()
+            let selectedPair: any
+            let inProgressPair: any
+
+            stats.forEach((report: any) => {
+                if (report.type === 'local-candidate') localCandidates.set(report.id, report)
+                if (report.type === 'remote-candidate') remoteCandidates.set(report.id, report)
+            })
+
+            stats.forEach((report: any) => {
+                if (report.type !== 'candidate-pair') return
+                const isSelected =
+                    report.selected === true ||
+                    report.nominated === true ||
+                    report.state === 'succeeded'
+                if (isSelected && !selectedPair) {
+                    selectedPair = report
+                    return
+                }
+                if (!inProgressPair && report.state === 'in-progress') inProgressPair = report
+            })
+
+            const pair = selectedPair ?? inProgressPair
+            const local = pair ? localCandidates.get(pair.localCandidateId) : undefined
+            const remote = pair ? remoteCandidates.get(pair.remoteCandidateId) : undefined
+
+            this.dbg.p(`ice diagnostics (${reason})`, {
+                generation,
+                connectionState: this.pc.connectionState,
+                iceConnectionState: this.pc.iceConnectionState,
+                signalingState: this.pc.signalingState,
+                pairId: pair?.id ?? null,
+                pairState: pair?.state ?? null,
+                pairNominated: pair?.nominated ?? null,
+                pairSelected: pair?.selected ?? null,
+                pairRtt: pair?.currentRoundTripTime ?? null,
+                pairBytesSent: pair?.bytesSent ?? null,
+                pairBytesReceived: pair?.bytesReceived ?? null,
+                localCandidateType: local?.candidateType ?? null,
+                localProtocol: local?.protocol ?? null,
+                localAddress: local?.address ?? local?.ip ?? null,
+                localPort: local?.port ?? null,
+                remoteCandidateType: remote?.candidateType ?? null,
+                remoteProtocol: remote?.protocol ?? null,
+                remoteAddress: remote?.address ?? remote?.ip ?? null,
+                remotePort: remote?.port ?? null,
+            })
+            this.emitDebug(`ice-diagnostics:${reason}`)
+        } catch (e) {
+            this.dbg.pe(`ice diagnostics failed (${reason})`, e)
+        }
     }
 
     private scheduleSoftThenMaybeHard() {

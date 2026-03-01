@@ -16,6 +16,9 @@ const CONNECT_PROGRESS_MAX_BEFORE_READY = 0.92
 const CONNECT_PROGRESS_TICK_MS = 140
 const CONNECT_PROGRESS_STEP = 0.01
 const MAX_VISIBLE_LOG_ENTRIES = 120
+const forceConsoleDebug = new URLSearchParams(window.location.search).get('debugConsole') === '1'
+const DEMO_CONSOLE_DEBUG =
+    import.meta.env.DEV || import.meta.env.VITE_DEMO_CONSOLE_DEBUG === '1' || forceConsoleDebug
 const readHashPath = () => {
     const raw = window.location.hash.replace(/^#/, '')
     if (!raw) return '/'
@@ -200,6 +203,7 @@ export function App() {
     }, [mode, rtc.overallStatus])
 
     useEffect(() => {
+        if (!DEMO_CONSOLE_DEBUG) return
         const ds = rtc.debugState
         if (!ds) return
         const key = [
@@ -219,7 +223,15 @@ export function App() {
         console.info('[vibe-rtc demo][rtc]', {
             overallStatus: rtc.overallStatus,
             overallStatusText: rtc.overallStatusText,
-            debugState: ds,
+            role: ds.role,
+            roomId: ds.roomId,
+            pcGeneration: ds.pcGeneration,
+            phase: ds.phase,
+            icePhase: ds.icePhase,
+            pcState: ds.pcState,
+            iceState: ds.iceState,
+            signalingState: ds.signalingState,
+            lastEvent: ds.lastEvent,
         })
     }, [rtc.debugState, rtc.overallStatus, rtc.overallStatusText])
 

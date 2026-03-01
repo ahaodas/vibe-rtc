@@ -53,9 +53,14 @@ const rtcConfig: RTCConfiguration = {
 }
 const PROGRESS_STEP_PX = 10
 const buildSha = import.meta.env.VITE_BUILD_SHA?.trim() || 'local-dev'
+const forceConsoleDebug = new URLSearchParams(window.location.search).get('debugConsole') === '1'
+const DEMO_CONSOLE_DEBUG =
+    import.meta.env.DEV || import.meta.env.VITE_DEMO_CONSOLE_DEBUG === '1' || forceConsoleDebug
 let signalingOpSeq = 0
 
-console.info(`[vibe-rtc demo] build=${buildSha}`)
+if (DEMO_CONSOLE_DEBUG) {
+    console.info(`[vibe-rtc demo] build=${buildSha}`)
+}
 
 function authSnapshot(auth: {
     currentUser?: { uid?: string | null; isAnonymous?: boolean } | null
@@ -93,10 +98,12 @@ function wrapSignalDbWithConsoleDebug(
                 const method = String(prop)
                 const safeArgs = args.map(toLogArg)
 
-                console.info(`[vibe-rtc demo][signal:${opId}] ${method}:start`, {
-                    args: safeArgs,
-                    auth: getAuth(),
-                })
+                if (DEMO_CONSOLE_DEBUG) {
+                    console.info(`[vibe-rtc demo][signal:${opId}] ${method}:start`, {
+                        args: safeArgs,
+                        auth: getAuth(),
+                    })
+                }
 
                 try {
                     const result = value.apply(target, args)
@@ -108,9 +115,11 @@ function wrapSignalDbWithConsoleDebug(
                     ) {
                         return (result as Promise<unknown>)
                             .then((resolved) => {
-                                console.info(`[vibe-rtc demo][signal:${opId}] ${method}:ok`, {
-                                    auth: getAuth(),
-                                })
+                                if (DEMO_CONSOLE_DEBUG) {
+                                    console.info(`[vibe-rtc demo][signal:${opId}] ${method}:ok`, {
+                                        auth: getAuth(),
+                                    })
+                                }
                                 return resolved
                             })
                             .catch((error) => {
@@ -122,9 +131,11 @@ function wrapSignalDbWithConsoleDebug(
                             })
                     }
 
-                    console.info(`[vibe-rtc demo][signal:${opId}] ${method}:ok`, {
-                        auth: getAuth(),
-                    })
+                    if (DEMO_CONSOLE_DEBUG) {
+                        console.info(`[vibe-rtc demo][signal:${opId}] ${method}:ok`, {
+                            auth: getAuth(),
+                        })
+                    }
                     return result
                 } catch (error) {
                     console.error(`[vibe-rtc demo][signal:${opId}] ${method}:error`, {
@@ -196,12 +207,18 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
             projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
             appId: import.meta.env.VITE_FIREBASE_APP_ID,
         }
-        console.info('[vibe-rtc demo][auth] ensureFirebase:start')
+        if (DEMO_CONSOLE_DEBUG) {
+            console.info('[vibe-rtc demo][auth] ensureFirebase:start')
+        }
         const { db, auth } = await ensureFirebase(fbConfig)
-        console.info('[vibe-rtc demo][auth] ensureFirebase:ok', authSnapshot(auth))
+        if (DEMO_CONSOLE_DEBUG) {
+            console.info('[vibe-rtc demo][auth] ensureFirebase:ok', authSnapshot(auth))
+        }
         const adapter = new FBAdapter(db, auth)
-        return wrapSignalDbWithConsoleDebug(adapter as unknown as SignalDB, () =>
-            authSnapshot(auth),
+        if (!DEMO_CONSOLE_DEBUG) return adapter as unknown as SignalDB
+        return wrapSignalDbWithConsoleDebug(
+            adapter as unknown as SignalDB,
+            () => authSnapshot(auth),
         )
     }
 

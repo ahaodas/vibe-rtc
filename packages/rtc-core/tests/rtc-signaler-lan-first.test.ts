@@ -245,6 +245,65 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         expect(reconnectHard).toHaveBeenCalledTimes(1)
     })
 
+    it('uses longer connecting watchdog timeout in STUN phase', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'DEFAULT',
+        })
+        await signaler.joinRoom('room-stun-watchdog')
+        await signaler.connect()
+
+        const reconnectHard = vi.fn().mockResolvedValue(undefined)
+        ;(signaler as any).reconnectHard = reconnectHard
+
+        const pc = FakeRTCPeerConnection.instances[0]
+        pc.connectionState = 'connecting'
+        pc.emit('connectionstatechange')
+
+        await vi.advanceTimersByTimeAsync(6_600)
+        expect(reconnectHard).toHaveBeenCalledTimes(0)
+
+        await vi.advanceTimersByTimeAsync(18_600)
+        expect(reconnectHard).toHaveBeenCalledTimes(1)
+    })
+
+    it('limits STUN connecting watchdog hard reconnect attempts', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'DEFAULT',
+        })
+        await signaler.joinRoom('room-stun-watchdog-limit')
+        await signaler.connect()
+
+        const reconnectHard = vi.fn().mockResolvedValue(undefined)
+        ;(signaler as any).reconnectHard = reconnectHard
+
+        const pc = FakeRTCPeerConnection.instances[0]
+        pc.connectionState = 'connecting'
+
+        pc.emit('connectionstatechange')
+        await vi.advanceTimersByTimeAsync(25_100)
+        expect(reconnectHard).toHaveBeenCalledTimes(1)
+
+        pc.emit('connectionstatechange')
+        await vi.advanceTimersByTimeAsync(25_100)
+        expect(reconnectHard).toHaveBeenCalledTimes(2)
+
+        pc.emit('connectionstatechange')
+        await vi.advanceTimersByTimeAsync(25_100)
+        expect(reconnectHard).toHaveBeenCalledTimes(2)
+    })
+
     it('does not poison remote generation from echoed answer', async () => {
         vi.stubGlobal(
             'RTCPeerConnection',
