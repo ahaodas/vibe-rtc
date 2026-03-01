@@ -6,7 +6,7 @@ const APP_BASE_PATH = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '')
 const toBasePath = (path: string) => `${APP_BASE_PATH}${path.startsWith('/') ? path : `/${path}`}`
 const QR_FOREGROUND = '#c4b550ff'
 const QR_BACKGROUND = '#3e4637'
-const PROGRESS_STEP_PX = 10
+const PROGRESS_STEP_PX = 12
 const CREATE_PROGRESS_MAX_BEFORE_READY = 0.92
 const CREATE_PROGRESS_IDLE_TICK_MS = 120
 const CREATE_PROGRESS_IDLE_STEP = 0.008
@@ -323,18 +323,13 @@ export function App() {
               : rtc.lastError
                 ? `${rtc.lastError.code ? `${rtc.lastError.code}: ` : ''}${rtc.lastError.message}`
                 : 'Ready to create room.'
-        const modalStatusText =
-            typeof rtc.overallStatusText === 'string' && rtc.overallStatusText.trim().length > 0
-                ? rtc.overallStatusText
-                : statusText
-
         return (
             <main className="demoShell demoShellInitial">
                 {createPending && !rtc.booting && (
                     <div className="appModalBackdrop" aria-live="polite">
                         <section className="appModal">
                             <h2 className="appModalTitle">Creating room...</h2>
-                            <p className="appModalMessage">{modalStatusText}</p>
+                            <p className="appModalMessage">{rtc.overallStatusText}</p>
                             <div className="appProgressMeta">{createProgressPercentSafe}%</div>
                             <div
                                 ref={createProgressTrackRef}
