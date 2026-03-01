@@ -55,11 +55,6 @@ button:disabled {
     }
 }
 
-.lab.isBusy .hero,
-.lab.isBusy .panel {
-    animation: roomPulse 1.15s ease-in-out infinite;
-}
-
 .heroTop {
     display: flex;
     align-items: center;
@@ -77,9 +72,57 @@ button:disabled {
     color: var(--muted);
 }
 
+.overall {
+    display: grid;
+    grid-template-columns: 74px 110px 1fr;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #f9fcff;
+    padding: 8px 10px;
+}
+
+.overallKey {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    font-weight: 700;
+}
+
+.overallStatus {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+}
+
+.overallText {
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.overall-none .overallStatus {
+    color: #5b6472;
+}
+
+.overall-connecting .overallStatus {
+    color: var(--accent);
+}
+
+.overall-connected .overallStatus {
+    color: var(--ok);
+}
+
+.overall-error .overallStatus {
+    color: var(--warn);
+}
+
 .flowStatus {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 8px;
     margin-top: 10px;
 }
@@ -124,6 +167,11 @@ button:disabled {
     border-radius: 14px;
     padding: 16px;
     margin-top: 12px;
+}
+
+.lab.isBusy .hero,
+.lab.isBusy .panel {
+    animation: roomPulse 1.15s ease-in-out infinite;
 }
 
 .panel h2 {
@@ -242,16 +290,24 @@ button:disabled {
     letter-spacing: 0.04em;
 }
 
-.lane-fast {
+.lane-system {
+    color: #5b6472;
+}
+
+.lane-signaling {
+    color: #6f4d0f;
+}
+
+.lane-webrtc {
     color: var(--accent);
 }
 
-.lane-reliable {
+.lane-data {
     color: var(--ok);
 }
 
-.lane-event {
-    color: #5b6472;
+.lane-error {
+    color: var(--warn);
 }
 
 .time {
@@ -273,6 +329,10 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
+    .overall {
+        grid-template-columns: 1fr;
+    }
+
     .flowStatus {
         grid-template-columns: 1fr 1fr;
     }

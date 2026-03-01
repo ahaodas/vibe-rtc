@@ -62,6 +62,10 @@ await rtc.endRoom()
 `useVibeRTC()` returns:
 
 - `status`: `idle | booting | connecting | connected | disconnected | error`
+- `overallStatus`: `none | connecting | connected | error` (aggregated signaling + WebRTC state)
+- `overallStatusText`: current high-level operation description
+- `operationLog`: chronological operation feed (`signaling | webrtc | data | system | error`)
+- `clearOperationLog()`: clears operation feed
 - `booting`, `bootError`, `lastError`
 - `roomId`
 - `lastFastMessage`, `lastReliableMessage`

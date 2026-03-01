@@ -1,12 +1,6 @@
 import { useVibeRTC } from '@vibe-rtc/rtc-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-type LogLine = {
-    at: string
-    lane: 'fast' | 'reliable' | 'event'
-    text: string
-}
-
 const APP_BASE_PATH = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '')
 const toBasePath = (path: string) => `${APP_BASE_PATH}${path.startsWith('/') ? path : `/${path}`}`
 const readHashPath = () => {
@@ -23,7 +17,6 @@ export function App() {
     const rtc = useVibeRTC()
     const [fastText, setFastText] = useState('ping-fast')
     const [reliableText, setReliableText] = useState('ping-reliable')
-    const [logs, setLogs] = useState<LogLine[]>([])
     const autoRouteHandledRef = useRef<string | null>(null)
     const [hashPath, setHashPathState] = useState(readHashPath)
 
@@ -39,14 +32,15 @@ export function App() {
     const mode: 'initial' | 'caller' | 'callee' = routeRole ?? 'initial'
 
     const hasChannel = Boolean(rtc.signaler && rtc.roomId)
-    const canSend = rtc.status === 'connected'
+    const canSend = rtc.overallStatus === 'connected'
+    const isConnecting = rtc.overallStatus === 'connecting'
 
     const signalingState = rtc.booting
         ? 'Initializing signaling'
         : rtc.bootError
           ? 'Signaling boot error'
           : 'Signaling ready'
-    const roomBusy = rtc.booting || rtc.status === 'connecting'
+    const roomBusy = isConnecting
     const roomState = !rtc.roomId
         ? 'No room'
         : rtc.lastError?.code === 'ROOM_NOT_FOUND'
@@ -64,6 +58,7 @@ export function App() {
                 ? 'Error'
                 : 'Idle'
     const sendState = !hasChannel ? 'No channel' : canSend ? 'Ready to send' : 'Waiting to send'
+    const selectedPath = rtc.debugState?.selectedPath ? rtc.debugState.selectedPath : 'pending'
 
     const callerUrl = useMemo(() => {
         if (!rtc.roomId) return ''
@@ -78,43 +73,6 @@ export function App() {
         if (!calleeUrl) return ''
         return `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(calleeUrl)}`
     }, [calleeUrl])
-
-    useEffect(() => {
-        if (!rtc.lastFastMessage) return
-        const msg = rtc.lastFastMessage
-        setLogs((prev) => [
-            {
-                at: new Date(msg.at).toLocaleTimeString(),
-                lane: 'fast',
-                text: msg.data,
-            },
-            ...prev,
-        ])
-    }, [rtc.lastFastMessage])
-
-    useEffect(() => {
-        if (!rtc.lastReliableMessage) return
-        const msg = rtc.lastReliableMessage
-        setLogs((prev) => [
-            {
-                at: new Date(msg.at).toLocaleTimeString(),
-                lane: 'reliable',
-                text: msg.data,
-            },
-            ...prev,
-        ])
-    }, [rtc.lastReliableMessage])
-
-    useEffect(() => {
-        setLogs((prev) => [
-            {
-                at: new Date().toLocaleTimeString(),
-                lane: 'event',
-                text: `status: ${rtc.status}`,
-            },
-            ...prev,
-        ])
-    }, [rtc.status])
 
     useEffect(() => {
         if (!routeRole || !routeRoomId) return
@@ -155,10 +113,23 @@ export function App() {
                     <div className="roleBadge">Screen: {mode.toUpperCase()}</div>
                 </div>
                 <p>Manual reconnect/reload and messaging checks on top of rtc-core.</p>
+                <div className={`overall overall-${rtc.overallStatus}`}>
+                    <span className="overallKey">Overall</span>
+                    <span className="overallStatus">{rtc.overallStatus}</span>
+                    <span className="overallText">{rtc.overallStatusText}</span>
+                </div>
                 <div className="flowStatus">
                     <div className="flowItem">
                         <span className="flowKey">Signaling</span>
                         <span className="flowVal">{signalingState}</span>
+                    </div>
+                    <div className="flowItem">
+                        <span className="flowKey">Overall</span>
+                        <span className="flowVal">{rtc.overallStatus}</span>
+                    </div>
+                    <div className="flowItem">
+                        <span className="flowKey">Path</span>
+                        <span className="flowVal">{selectedPath}</span>
                     </div>
                     <div className="flowItem">
                         <span className="flowKey">Room</span>
@@ -184,7 +155,11 @@ export function App() {
                 {mode === 'initial' && (
                     <>
                         <div className="actions">
-                            <button type="button" onClick={() => void createRoom()}>
+                            <button
+                                type="button"
+                                onClick={() => void createRoom()}
+                                disabled={isConnecting}
+                            >
                                 Create Room
                             </button>
                         </div>
@@ -212,7 +187,11 @@ export function App() {
                         <div className="row">
                             <span className="label">Room ID</span>
                             <div className="input">{routeRoomId}</div>
-                            <button type="button" onClick={() => void attachCurrentRole()}>
+                            <button
+                                type="button"
+                                onClick={() => void attachCurrentRole()}
+                                disabled={isConnecting}
+                            >
                                 Attach as {mode}
                             </button>
                         </div>
@@ -220,13 +199,18 @@ export function App() {
                         <div className="actions">
                             {hasChannel && (
                                 <>
-                                    <button type="button" onClick={() => void rtc.disconnect()}>
+                                    <button
+                                        type="button"
+                                        onClick={() => void rtc.disconnect()}
+                                        disabled={isConnecting}
+                                    >
                                         Disconnect Channel
                                     </button>
                                     {mode === 'caller' && (
                                         <button
                                             type="button"
                                             onClick={() => void endRoomAndReturnInitial()}
+                                            disabled={isConnecting}
                                         >
                                             End Room (Host)
                                         </button>
@@ -235,7 +219,11 @@ export function App() {
                             )}
                             {hasChannel && (
                                 <>
-                                    <button type="button" onClick={() => void rtc.reconnectSoft()}>
+                                    <button
+                                        type="button"
+                                        onClick={() => void rtc.reconnectSoft()}
+                                        disabled={isConnecting}
+                                    >
                                         Reconnect Soft
                                     </button>
                                     <button
@@ -243,6 +231,7 @@ export function App() {
                                         onClick={() =>
                                             void rtc.reconnectHard({ awaitReadyMs: 12_000 })
                                         }
+                                        disabled={isConnecting}
                                     >
                                         Reconnect Hard
                                     </button>
@@ -297,7 +286,7 @@ export function App() {
                                 <button
                                     type="button"
                                     onClick={() => void rtc.sendFast(fastText)}
-                                    disabled={!canSend}
+                                    disabled={!canSend || isConnecting}
                                 >
                                     Send
                                 </button>
@@ -316,7 +305,7 @@ export function App() {
                                 <button
                                     type="button"
                                     onClick={() => void rtc.sendReliable(reliableText)}
-                                    disabled={!canSend}
+                                    disabled={!canSend || isConnecting}
                                 >
                                     Send
                                 </button>
@@ -334,13 +323,22 @@ export function App() {
             </section>
 
             <section className="panel">
-                <h2>Message/Event Log</h2>
+                <h2>Operation Log</h2>
+                <div className="actions">
+                    <button
+                        type="button"
+                        onClick={() => rtc.clearOperationLog()}
+                        disabled={rtc.operationLog.length === 0}
+                    >
+                        Clear Log
+                    </button>
+                </div>
                 <ul className="log">
-                    {logs.map((l, i) => (
-                        <li key={`${l.at}-${i}`}>
-                            <span className={`lane lane-${l.lane}`}>{l.lane}</span>
-                            <span className="time">{l.at}</span>
-                            <span>{l.text}</span>
+                    {rtc.operationLog.map((entry, i) => (
+                        <li key={`${entry.at}-${entry.scope}-${entry.event ?? 'evt'}-${i}`}>
+                            <span className={`lane lane-${entry.scope}`}>{entry.scope}</span>
+                            <span className="time">{new Date(entry.at).toLocaleTimeString()}</span>
+                            <span>{entry.message}</span>
                         </li>
                     ))}
                 </ul>

@@ -9,6 +9,17 @@ export type VibeRTCStatus =
     | 'disconnected'
     | 'error'
 
+export type VibeRTCOverallStatus = 'none' | 'connecting' | 'connected' | 'error'
+
+export type VibeRTCOperationScope = 'system' | 'signaling' | 'webrtc' | 'data' | 'error'
+
+export interface VibeRTCOperationLogEntry {
+    at: number
+    scope: VibeRTCOperationScope
+    message: string
+    event?: string
+}
+
 export interface VibeRTCError {
     name: string
     message: string
@@ -37,6 +48,10 @@ export interface VibeRTCState {
 
 export interface VibeRTCContextValue extends VibeRTCState {
     signaler?: RTCSignaler | null
+    overallStatus: VibeRTCOverallStatus
+    overallStatusText: string
+    operationLog: VibeRTCOperationLogEntry[]
+    clearOperationLog: () => void
     /** Create a room as caller; returns roomId and connects */
     createChannel: () => Promise<string>
     /** Join an existing room as callee and connect */
