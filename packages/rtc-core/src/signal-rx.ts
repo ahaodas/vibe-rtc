@@ -45,7 +45,7 @@ const sdpHash = (s?: string | null) => {
 }
 
 const iceKey = (c: SignalIce) =>
-    `${c.epoch ?? -1}|${c.candidate ?? ''}|${c.sdpMid ?? ''}|${c.sdpMLineIndex ?? -1}`
+    `${c.epoch ?? -1}|${c.pcGeneration ?? -1}|${c.candidate ?? ''}|${c.sdpMid ?? ''}|${c.sdpMLineIndex ?? -1}`
 
 // --- Base subscribe -> Observable converter ---
 function fromSubscribe<T>(sub: (cb: (v: T) => void) => () => void): Observable<T> {

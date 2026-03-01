@@ -29,6 +29,10 @@ const ROOM_TTL_MINUTES = 120
 const sanitize = <T extends Record<string, any>>(o: T): T =>
     Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
 
+type IceCandidateInput =
+    | RTCIceCandidate
+    | (RTCIceCandidateInit & { epoch?: number; pcGeneration?: number })
+
 const candidateDocId = (ice: RTCIceCandidateInit): string => {
     const raw = `${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
     let h = 2166136261
@@ -38,6 +42,21 @@ const candidateDocId = (ice: RTCIceCandidateInit): string => {
     }
     return `c_${(h >>> 0).toString(16)}`
 }
+
+const normalizeIceCandidate = (
+    ice: IceCandidateInput,
+): RTCIceCandidateInit & { epoch?: number; pcGeneration?: number } => {
+    const withMaybeToJson = ice as RTCIceCandidate & {
+        epoch?: number
+        pcGeneration?: number
+        toJSON?: () => RTCIceCandidateInit
+    }
+    const base = typeof withMaybeToJson.toJSON === 'function' ? withMaybeToJson.toJSON() : ice
+    return sanitize(base as RTCIceCandidateInit & { epoch?: number; pcGeneration?: number })
+}
+
+const candidateSignalKey = (ice: RTCIceCandidateInit & { epoch?: number; pcGeneration?: number }) =>
+    `${ice.epoch ?? -1}|${ice.pcGeneration ?? -1}|${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
 
 export class FBAdapter implements SignalDB {
     private roomRef?: DocumentReference<RoomDoc>
@@ -352,31 +371,51 @@ export class FBAdapter implements SignalDB {
 
     async addCallerIceCandidate(ice: RTCIceCandidate): Promise<void> {
         if (!this.callerCol) throw new Error('Room not selected')
-        const json = sanitize(ice.toJSON())
+        const json = normalizeIceCandidate(ice as IceCandidateInput)
         const ref = doc(this.callerCol, candidateDocId(json))
         await setDoc(
             ref,
-            { ...json, epoch: this.roomEpoch, createdAt: serverTimestamp() },
+            {
+                ...json,
+                epoch: json.epoch ?? this.roomEpoch,
+                pcGeneration: json.pcGeneration,
+                createdAt: serverTimestamp(),
+            },
             { merge: true },
         )
     }
 
     async addCalleeIceCandidate(ice: RTCIceCandidate): Promise<void> {
         if (!this.calleeCol) throw new Error('Room not selected')
-        const json = sanitize(ice.toJSON())
+        const json = normalizeIceCandidate(ice as IceCandidateInput)
         const ref = doc(this.calleeCol, candidateDocId(json))
         await setDoc(
             ref,
-            { ...json, epoch: this.roomEpoch, createdAt: serverTimestamp() },
+            {
+                ...json,
+                epoch: json.epoch ?? this.roomEpoch,
+                pcGeneration: json.pcGeneration,
+                createdAt: serverTimestamp(),
+            },
             { merge: true },
         )
     }
 
     subscribeOnCallerIceCandidate(cb: (ice: RTCIceCandidateInit) => void): () => void {
         if (!this.callerCol) return () => {}
+        const seenByDocId = new Map<string, string>()
         const unsub = onSnapshot(this.callerCol, (snap) => {
             snap.docChanges().forEach((ch) => {
-                if (ch.type === 'added') cb(ch.doc.data())
+                if (ch.type === 'removed') {
+                    seenByDocId.delete(ch.doc.id)
+                    return
+                }
+                if (ch.type !== 'added' && ch.type !== 'modified') return
+                const data = ch.doc.data()
+                const key = candidateSignalKey(data)
+                if (seenByDocId.get(ch.doc.id) === key) return
+                seenByDocId.set(ch.doc.id, key)
+                cb(data)
             })
         })
         this.trackUnsub(unsub)
@@ -385,9 +424,19 @@ export class FBAdapter implements SignalDB {
 
     subscribeOnCalleeIceCandidate(cb: (ice: RTCIceCandidateInit) => void): () => void {
         if (!this.calleeCol) return () => {}
+        const seenByDocId = new Map<string, string>()
         const unsub = onSnapshot(this.calleeCol, (snap) => {
             snap.docChanges().forEach((ch) => {
-                if (ch.type === 'added') cb(ch.doc.data())
+                if (ch.type === 'removed') {
+                    seenByDocId.delete(ch.doc.id)
+                    return
+                }
+                if (ch.type !== 'added' && ch.type !== 'modified') return
+                const data = ch.doc.data()
+                const key = candidateSignalKey(data)
+                if (seenByDocId.get(ch.doc.id) === key) return
+                seenByDocId.set(ch.doc.id, key)
+                cb(data)
             })
         })
         this.trackUnsub(unsub)

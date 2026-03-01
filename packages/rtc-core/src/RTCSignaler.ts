@@ -1291,10 +1291,16 @@ export class RTCSignaler {
             }
             this.bumpCandidateCounter(this.candidateStats.localSent, candidateType)
             try {
-                // Keep RTCIceCandidate object for adapters that rely on ice.toJSON().
-                const ice: RTCIceCandidate = ev.candidate
-                if (this.role === 'caller') await this.streams.addCallerIceCandidate(ice as any)
-                else await this.streams.addCalleeIceCandidate(ice as any)
+                // Include local pcGeneration so remote side can safely ignore stale ICE
+                // after peer rebuilds within the same signaling epoch.
+                const candidatePayload = {
+                    ...ev.candidate.toJSON(),
+                    epoch: this.signalingEpoch,
+                    pcGeneration: generation,
+                } as RTCIceCandidateInit & { epoch: number; pcGeneration: number }
+                if (this.role === 'caller')
+                    await this.streams.addCallerIceCandidate(candidatePayload as any)
+                else await this.streams.addCalleeIceCandidate(candidatePayload as any)
             } catch (e) {
                 this.onError(
                     this.raiseError(
