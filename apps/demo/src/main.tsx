@@ -19,6 +19,7 @@ const defaultStunUrls = [
     'stun:stun1.l.google.com:19302',
     'stun:stun2.l.google.com:19302',
     'stun:stun3.l.google.com:19302',
+   // 'free.expressturn.com:3478'
 ]
 
 const envTurnUrls = import.meta.env.VITE_TURN_URLS?.trim()
@@ -40,35 +41,53 @@ const turnUsername = import.meta.env.VITE_TURN_USERNAME ?? import.meta.env.VITE_
 const turnCredential =
     import.meta.env.VITE_TURN_CREDENTIAL ?? import.meta.env.VITE_METERED_CREDENTIAL
 
-const rtcIceServers: RTCIceServer[] = [
-    {
-        urls: stunUrls,
-    },
-    ...(turnUsername && turnCredential
-        ? [
-              {
-                  urls: turnUrls,
-                  username: turnUsername,
-                  credential: turnCredential,
-              } satisfies RTCIceServer,
-          ]
-        : []),
-]
+const searchParams = new URLSearchParams(window.location.search)
+const forceConsoleDebug = searchParams.get('debugConsole') === '1'
+const forceTurnOnlyByQuery = searchParams.get('turnOnly') === '1'
+const forceTurnOnlyByEnv = import.meta.env.VITE_FORCE_TURN_ONLY === '1'
+const FORCE_TURN_ONLY = forceTurnOnlyByQuery || forceTurnOnlyByEnv
+
+const turnServer =
+    turnUsername && turnCredential
+        ? ({
+              urls: turnUrls,
+              username: turnUsername,
+              credential:  turnCredential,
+          } satisfies RTCIceServer)
+        : null
+
+const rtcIceServers: RTCIceServer[] = FORCE_TURN_ONLY
+    ? turnServer
+        ? [turnServer]
+        : []
+    : [
+          {
+              urls: stunUrls,
+          },
+          ...(turnServer ? [turnServer] : []),
+      ]
 
 const rtcConfig: RTCConfiguration = {
     iceServers: rtcIceServers,
     iceCandidatePoolSize: 10,
+    ...(FORCE_TURN_ONLY ? { iceTransportPolicy: 'relay' as const } : {}),
 }
+const demoConnectionStrategy = FORCE_TURN_ONLY ? 'DEFAULT' : 'LAN_FIRST'
 const DEMO_LAN_FIRST_TIMEOUT_MS = 4500
 const PROGRESS_STEP_PX = 10
 const buildSha = import.meta.env.VITE_BUILD_SHA?.trim() || 'local-dev'
-const forceConsoleDebug = new URLSearchParams(window.location.search).get('debugConsole') === '1'
 const DEMO_CONSOLE_DEBUG =
     import.meta.env.DEV || import.meta.env.VITE_DEMO_CONSOLE_DEBUG === '1' || forceConsoleDebug
 let signalingOpSeq = 0
 
 if (DEMO_CONSOLE_DEBUG) {
     console.info(`[vibe-rtc demo] build=${buildSha}`)
+    console.info('[vibe-rtc demo] rtc mode', {
+        forceTurnOnly: FORCE_TURN_ONLY,
+        connectionStrategy: demoConnectionStrategy,
+        iceTransportPolicy: rtcConfig.iceTransportPolicy ?? 'all',
+        iceServers: rtcIceServers.map((server) => server.urls),
+    })
 }
 
 function authSnapshot(auth: {
@@ -233,8 +252,10 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
     return (
         <VibeRTCProvider
             rtcConfiguration={rtcConfig}
-            connectionStrategy="LAN_FIRST"
-            lanFirstTimeoutMs={DEMO_LAN_FIRST_TIMEOUT_MS}
+            connectionStrategy={demoConnectionStrategy}
+            lanFirstTimeoutMs={
+                demoConnectionStrategy === 'LAN_FIRST' ? DEMO_LAN_FIRST_TIMEOUT_MS : undefined
+            }
             renderLoading={<BootLoadingOverlay />}
             renderBootError={(error) => (
                 <div className="appModalBackdrop" role="alert" aria-live="assertive">
