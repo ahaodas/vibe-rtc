@@ -15,7 +15,12 @@ type AppApi = {
     makeCaller: () => Promise<ReturnType<typeof make> extends Promise<infer T> ? T : never>
     makeCallee: () => Promise<ReturnType<typeof make> extends Promise<infer T> ? T : never>
 }
-type E2EWindow = Window & { app: AppApi }
+
+declare global {
+    interface Window {
+        app: AppApi
+    }
+}
 
 const rtcConfiguration: RTCConfiguration = {
     iceServers: [
@@ -106,7 +111,7 @@ async function make(role: Who) {
     }
 }
 
-;(window as E2EWindow).app = {
+window.app = {
     makeCaller: () => make('caller'),
     makeCallee: () => make('callee'),
 }

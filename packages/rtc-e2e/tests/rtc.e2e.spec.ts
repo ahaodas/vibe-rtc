@@ -8,8 +8,8 @@ const RECOVERY_SLA_MS = 10_000
 
 type RoleState = {
     pcState: string
-    fast?: { state?: string }
-    reliable?: { state?: string }
+    fast?: { state?: string } | null
+    reliable?: { state?: string } | null
 }
 
 type RoleApi = {
