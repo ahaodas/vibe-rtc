@@ -15,6 +15,7 @@ const CREATE_PROGRESS_FINISH_STEP = 0.08
 const CONNECT_PROGRESS_MAX_BEFORE_READY = 0.92
 const CONNECT_PROGRESS_TICK_MS = 140
 const CONNECT_PROGRESS_STEP = 0.01
+const MAX_VISIBLE_LOG_ENTRIES = 120
 const readHashPath = () => {
     const raw = window.location.hash.replace(/^#/, '')
     if (!raw) return '/'
@@ -70,11 +71,12 @@ export function App() {
     const channelReadyForMessages = fastReady || reliableReady
     const hasMessage = messageText.trim().length > 0
     const orderedLog = useMemo(() => [...rtc.operationLog].reverse(), [rtc.operationLog])
-    const visibleLog = useMemo(
-        () =>
-            onlyChatMessages ? orderedLog.filter((entry) => isChannelMessage(entry)) : orderedLog,
-        [orderedLog, onlyChatMessages],
-    )
+    const visibleLog = useMemo(() => {
+        const filtered = onlyChatMessages
+            ? orderedLog.filter((entry) => isChannelMessage(entry))
+            : orderedLog
+        return filtered.slice(-MAX_VISIBLE_LOG_ENTRIES)
+    }, [orderedLog, onlyChatMessages])
 
     const calleeUrl = useMemo(() => {
         if (!routeRoomId) return ''
