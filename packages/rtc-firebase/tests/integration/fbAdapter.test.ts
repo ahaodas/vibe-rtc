@@ -99,7 +99,7 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
     })
 
     it('create/join; multi-subscribers; offer/answer; merge safety', async () => {
-        // Два подписчика на offer у callee
+        // Two offer subscribers on callee.
         const seen1: OfferSDP[] = []
         const seen2: OfferSDP[] = []
         const u1 = callee.subscribeOnOffer((offer) => {
@@ -109,14 +109,14 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
             seen2.push(offer)
         })
 
-        // Публикуем offer (merge:true не затирает answer)
+        // Publish offer (merge:true does not overwrite answer).
         await caller.setOffer(o('v=0\no=- 1 1 IN IP4 127.0.0.1\ns=-\n'))
 
         await sleep(600)
         expect(seen1.length).toBe(1)
         expect(seen2.length).toBe(1)
 
-        // Теперь ставим answer со стороны callee
+        // Now set answer from callee side.
         const seenAnswer: AnswerSDP[] = []
         const unsubAns = caller.subscribeOnAnswer((ans) => {
             seenAnswer.push(ans)
@@ -126,13 +126,13 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
         await sleep(600)
         expect(seenAnswer.length).toBe(1)
 
-        // Проверим, что обе поля присутствуют (merge сохранил)
+        // Verify both fields are present (merge preserved them).
         const snap = await getDoc(doc(db, ROOMS, roomId))
         const data = snap.data() || {}
         expect(data.offer?.type).toBe('offer')
         expect(data.answer?.type).toBe('answer')
 
-        // отписки
+        // Unsubscribe.
         u1()
         u2()
         unsubAns()
@@ -151,7 +151,7 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
     })
 
     it('ICE split by roles; clear subcollections; resubscribe still works after clear', async () => {
-        // подписки
+        // Subscriptions.
         let callerSaw = 0
         let calleeSaw = 0
         const uCallee = callee.subscribeOnCallerIceCandidate(() => {
@@ -167,7 +167,7 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
         expect(calleeSaw).toBeGreaterThan(0)
         expect(callerSaw).toBeGreaterThan(0)
 
-        // очистка
+        // Cleanup.
         await caller.clearCallerCandidates()
         await caller.clearCalleeCandidates()
         const [callerCol, calleeCol] = await Promise.all([
@@ -177,7 +177,7 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
         expect(callerCol.size).toBe(0)
         expect(calleeCol.size).toBe(0)
 
-        // после очистки новые кандидаты всё равно проходят
+        // After cleanup, new candidates should still flow.
         await caller.addCallerIceCandidate(candidate('c3'))
         await callee.addCalleeIceCandidate(candidate('c4'))
         await sleep(600)
@@ -212,32 +212,32 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
         expect(count).toBeGreaterThan(0)
         const prev = count
 
-        // ручной unsub
+        // Manual unsubscribe.
         unsub()
         await caller.setOffer(o('B'))
         await sleep(500)
         expect(count).toBe(prev)
 
-        await caller.clearOffer() // <— добавь эту строку
-        await sleep(200) // чуть подождать, чтобы запись дошла
+        await caller.clearOffer() // Add this line.
+        await sleep(200) // Wait briefly so write propagation completes.
 
-        // повесим новую подписку и проверим auto-unsub внутри endRoom
+        // Add a new subscription and verify endRoom auto-unsub behavior.
         let after = 0
         callee.subscribeOnOffer(() => {
             after++
         })
-        await caller.endRoom() // должен снять подписки и удалить комнату
+        await caller.endRoom() // Should remove subscriptions and delete the room.
         await sleep(300)
-        // назад создать заново для tearDown следующих тестов
+        // Re-create for tearDown of following tests.
         roomId = await caller.createRoom()
         await caller.joinRoom(roomId)
         callee.joinRoom(roomId)
         await callee.joinRoom(roomId)
-        expect(after).toBe(0) // подписка снята в endRoom
+        expect(after).toBe(0) // Subscription removed in endRoom.
     })
 
     it('subscribe methods before joinRoom return no-op unsubscribe and do not throw', async () => {
-        const fresh = new FBAdapter(db, auth) // не joinRoom
+        const fresh = new FBAdapter(db, auth) // Without joinRoom.
         const u1 = fresh.subscribeOnOffer(() => {})
         const u2 = fresh.subscribeOnAnswer(() => {})
         const u3 = fresh.subscribeOnCallerIceCandidate(() => {})
@@ -259,7 +259,7 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
         await expect(fresh.addCalleeIceCandidate(candidate('z'))).rejects.toThrow()
         await expect(fresh.clearCallerCandidates()).rejects.toThrow()
         await expect(fresh.clearCalleeCandidates()).rejects.toThrow()
-        // endRoom без комнаты — просто no-op
+        // endRoom without room selected is a no-op.
         await expect(fresh.endRoom()).resolves.toBeUndefined()
     })
 
@@ -268,14 +268,14 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
         await caller.clearOffer().catch(() => {})
         await caller.clearAnswer().catch(() => {})
 
-        // callee авто-ответит на новый offer
+        // callee auto-answers the new offer.
         let lastAnswered = ''
         const u = callee.subscribeOnOffer(async (offer) => {
             lastAnswered = `ans:${offer.sdp.length}`
             await callee.setAnswer(a(lastAnswered))
         })
 
-        // caller "перезагрузился"
+        // caller "reloaded".
         const caller2 = new FBAdapter(db, auth)
         await caller2.joinRoom(roomId)
 
@@ -295,7 +295,7 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
     })
 
     it('endRoom removes room doc and subcollections (final)', async () => {
-        // добавим чуть данных
+        // Add some data.
         await caller.setOffer(o('END'))
         await callee.setAnswer(a('END'))
         await caller.addCallerIceCandidate(candidate('E1'))
@@ -306,7 +306,7 @@ describeIntegration('FBAdapter — full integration suite (real Firestore)', () 
         const roomSnap = await getDoc(doc(db, ROOMS, roomId))
         expect(roomSnap.exists()).toBe(false)
 
-        // коллекции должны быть пусты/удалены
+        // Collections must be empty/removed.
         const [c1, c2] = await Promise.all([
             getDocs(collection(db, ROOMS, roomId, CALLER)),
             getDocs(collection(db, ROOMS, roomId, CALLEE)),

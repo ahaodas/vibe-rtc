@@ -65,7 +65,7 @@ export class FBAdapter implements SignalDB {
         const uid = this.uid
         if (!uid) throw new Error('Auth required')
 
-        // addDoc гарантирует новый id и не конфликтует
+        // addDoc semantics: guarantees a new id and no conflict.
         const ref = doc(collection(this.db, ROOMS) as any)
         await setDoc(ref, {
             creatorUid: uid,
@@ -92,7 +92,7 @@ export class FBAdapter implements SignalDB {
         this.callerCol = collection(ref, CALLER_CANDIDATES) as CollectionReference<CandidateDoc>
         this.calleeCol = collection(ref, CALLEE_CANDIDATES) as CollectionReference<CandidateDoc>
 
-        // если документа нет — «мягко» создадим, без create()
+        // If the document does not exist, create it softly via merge (no create()).
         const snap = await getDoc(ref)
         if (!snap.exists()) {
             await setDoc(
@@ -112,7 +112,7 @@ export class FBAdapter implements SignalDB {
             )
         }
 
-        // Первичное присоединение в выбранную роль.
+        // Initial join for the selected role.
         let joinedAsNewRole = false
         const uid = this.uid
         if (uid) {
@@ -139,8 +139,8 @@ export class FBAdapter implements SignalDB {
         let latest = (await getDoc(ref)).data() as RoomDoc | undefined
         this.roomEpoch = latest?.epoch ?? 0
 
-        // Если это re-attach существующего участника (например, reload страницы),
-        // поднимаем epoch и чистим SDP, чтобы обе стороны перешли в новое поколение сигналинга.
+        // If this is a re-attach of an existing participant (for example, page reload),
+        // bump epoch and clear SDP so both sides move to a new signaling generation.
         if (
             uid &&
             latest &&
@@ -278,7 +278,7 @@ export class FBAdapter implements SignalDB {
 
     async setOffer(offer: OfferSDP): Promise<void> {
         if (!this.roomRef) throw new Error('Room not selected')
-        // merge:true — никакого create(), избегаем "already exists"
+        // merge:true avoids create() and prevents "already exists" conflicts.
         await setDoc(
             this.roomRef,
             {

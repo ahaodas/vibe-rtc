@@ -28,13 +28,13 @@ export type CandidateDoc = RTCIceCandidateInit & {
 }
 
 export interface SignalDB {
-    /** Создать новую комнату, вернуть её id */
+    /** Create a new room and return its id */
     createRoom(): Promise<string>
 
-    /** Подключиться к существующей комнате (и инициализировать внутренние ref/коллекции адаптера) */
+    /** Join an existing room (and initialize adapter internal refs/collections) */
     joinRoom(id: string, role?: 'caller' | 'callee'): void | Promise<void>
 
-    /** Считать актуальный снапшот комнаты (нужен провайдеру для auto-attach) */
+    /** Read the current room snapshot (used by provider for auto-attach) */
     getRoom(): Promise<RoomDoc | null>
 
     /** SDP */
@@ -51,14 +51,14 @@ export interface SignalDB {
     subscribeOnCallerIceCandidate(cb: (ice: RTCIceCandidateInit) => void): () => void
     subscribeOnCalleeIceCandidate(cb: (ice: RTCIceCandidateInit) => void): () => void
 
-    /** Подписки на SDP */
+    /** SDP subscriptions */
     subscribeOnOffer(cb: (offer: OfferSDP) => void | Promise<void>): () => void
     subscribeOnAnswer(cb: (answer: AnswerSDP) => void | Promise<void>): () => void
 
-    /** Очистка ICE-коллекций */
+    /** Clear ICE collections */
     clearCallerCandidates(): Promise<void>
     clearCalleeCandidates(): Promise<void>
 
-    /** Полное завершение комнаты: отписки, удаление кандидатов и удаление документа комнаты */
+    /** Fully terminate a room: unsubscribe, delete candidates, and remove room document */
     endRoom(): Promise<void>
 }

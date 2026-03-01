@@ -81,7 +81,7 @@ export interface RTCSignalerOptions {
     onReliableOpen?: () => void
     onReliableClose?: () => void
     onError?: (err: RTCError) => void
-    onDebug?: (state: DebugState) => void // NEW: хук для UI
+    onDebug?: (state: DebugState) => void // NEW: hook for UI
 }
 
 export type Phase =
@@ -133,7 +133,7 @@ export class RTCSignaler {
     private polite: boolean
 
     private roomId: string | null = null
-    private unsubscribes: Unsub[] = [] // оставлено для совместимости, но не используется с Rx
+    private unsubscribes: Unsub[] = [] // kept for compatibility, but unused with Rx
     private connectedOrSubbed = false
 
     private readonly baseRtcConfig: RTCConfiguration
@@ -204,7 +204,7 @@ export class RTCSignaler {
         remoteDropped: this.makeCandidateCountMap(),
     }
 
-    // --- Новое: RxJS обёртка над сигналингом + список подписок ---
+    // --- New: RxJS wrapper over signaling + subscription list ---
     private streams
     private rxSubs: Subscription[] = []
     private readonly debugEnabled: boolean
@@ -370,7 +370,7 @@ export class RTCSignaler {
         this.initPeer()
         this.emitDebug('initPeer')
 
-        // --- Rx: подписки на удалённые ICE-кандидаты ---
+        // --- Rx: subscriptions to remote ICE candidates ---
         const remoteIce$ =
             this.role === 'caller' ? this.streams.calleeIce$ : this.streams.callerIce$
         this.rxSubs.push(
@@ -438,7 +438,7 @@ export class RTCSignaler {
             }),
         )
 
-        // --- Rx: входящие offer ---
+        // --- Rx: incoming offer ---
         this.rxSubs.push(
             this.streams.offer$.subscribe(async (offer) => {
                 if (!this.acceptEpoch((offer as any).epoch)) return
@@ -594,7 +594,7 @@ export class RTCSignaler {
             }),
         )
 
-        // --- Rx: входящие answer ---
+        // --- Rx: incoming answer ---
         this.rxSubs.push(
             this.streams.answer$.subscribe(async (answer) => {
                 if (!this.acceptEpoch((answer as any).epoch)) return
@@ -812,14 +812,14 @@ export class RTCSignaler {
         this.clearRecoveryTimers()
         this.clearLanFirstTimer()
 
-        // Rx-подписки
+        // Rx subscriptions
         for (const s of this.rxSubs.splice(0)) {
             try {
                 s.unsubscribe()
             } catch {}
         }
 
-        // старые подписки (на всякий случай, если где-то добавите)
+        // legacy subscriptions (in case one gets added somewhere)
         this.unsubscribes.forEach((u) => {
             try {
                 u()
@@ -1344,7 +1344,7 @@ export class RTCSignaler {
         ch.onclose = () => {
             this.dbg.p(`onclose (${ch.label})`)
 
-            // Игнорируем close от "старых" каналов после смены RTCPeerConnection.
+            // Ignore close events from stale channels after RTCPeerConnection replacement.
             if (!ownerPc || this.pc !== ownerPc) {
                 this.emitDebug(`dc-close-stale:${ch.label}`)
                 return
@@ -1510,14 +1510,14 @@ export class RTCSignaler {
         this.softTimer = setTimeout(() => {
             this.softRetries++
             this.reconnectSoft().catch(() => {})
-            // экспоненциальный бэкофф до 2.5с
+            // exponential backoff up to 2.5s
             this.softDelayMs = Math.min(this.softDelayMs * 2, 2500)
             this.emitDebug('soft-reconnect fire')
         }, softIn) as unknown as number
 
         this.hardTimer = setTimeout(() => {
             this.tryHardNow().catch(() => {})
-            // экспоненциальный бэкофф до 10с
+            // exponential backoff up to 10s
             this.hardRetries++
             this.hardDelayMs = Math.min(this.hardDelayMs * 2, 30000)
             this.emitDebug('hard-reconnect fire')
@@ -1527,7 +1527,7 @@ export class RTCSignaler {
     }
 
     private upkeepRecoveryBackoff() {
-        // Можно тонко подстроить стратегию бэкоффа/сброса здесь при нужных событиях
+        // Fine-tune backoff/reset strategy here for specific events.
     }
 
     private async tryHardNow() {

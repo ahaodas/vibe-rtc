@@ -1,5 +1,5 @@
 // signal-rx.ts
-// Тонкая RxJS-обёртка над вашим существующим SignalDB (без переписывания адаптера)
+// Thin RxJS wrapper over the existing SignalDB (without rewriting the adapter)
 
 import { distinctUntilChanged, map, Observable, shareReplay } from 'rxjs'
 
@@ -11,7 +11,7 @@ type SignalDescription = RTCSessionDescriptionInit & {
 type SignalIce = RTCIceCandidateInit & { epoch?: number; pcGeneration?: number }
 
 export interface SignalDB {
-    // управление комнатой
+    // room control
     createRoom(): Promise<string>
     joinRoom(id: string, role?: 'caller' | 'callee'): void | Promise<void>
     endRoom(): Promise<void>
@@ -33,7 +33,7 @@ export interface SignalDB {
     subscribeOnCalleeIceCandidate(cb: (c: SignalIce) => void): () => void
 }
 
-// ——— Утилиты для дедупа ———
+// --- Dedupe utilities ---
 const sdpHash = (s?: string | null) => {
     if (!s) return '∅'
     let x = 2166136261
@@ -47,7 +47,7 @@ const sdpHash = (s?: string | null) => {
 const iceKey = (c: SignalIce) =>
     `${c.epoch ?? -1}|${c.candidate ?? ''}|${c.sdpMid ?? ''}|${c.sdpMLineIndex ?? -1}`
 
-// ——— Базовый конвертер subscribe → Observable ———
+// --- Base subscribe -> Observable converter ---
 function fromSubscribe<T>(sub: (cb: (v: T) => void) => () => void): Observable<T> {
     return new Observable<T>((subscriber) => {
         const unsub = sub((v) => subscriber.next(v))
@@ -60,12 +60,12 @@ function fromSubscribe<T>(sub: (cb: (v: T) => void) => () => void): Observable<T
     })
 }
 
-// ——— Обёртка поверх SignalDB с Rx-потоками ———
+// --- SignalDB wrapper with Rx streams ---
 export function createSignalStreams(db: SignalDB) {
     const offerRaw$ = fromSubscribe<SignalDescription>(db.subscribeOnOffer.bind(db))
     const answerRaw$ = fromSubscribe<SignalDescription>(db.subscribeOnAnswer.bind(db))
 
-    // дедуп по SDP (иногда Firestore может прислать повтор)
+    // SDP dedupe (Firestore may occasionally emit duplicates)
     const offer$ = offerRaw$.pipe(
         map(
             (d) =>
@@ -92,7 +92,7 @@ export function createSignalStreams(db: SignalDB) {
         shareReplay({ bufferSize: 1, refCount: true }),
     )
 
-    // поток ICE для КАЖДОЙ стороны выбирается по роли
+    // ICE stream for each side is selected by role
     const callerIceRaw$ = fromSubscribe<SignalIce>(db.subscribeOnCallerIceCandidate.bind(db))
     const calleeIceRaw$ = fromSubscribe<SignalIce>(db.subscribeOnCalleeIceCandidate.bind(db))
 
@@ -116,7 +116,7 @@ export function createSignalStreams(db: SignalDB) {
         callerIce$,
         calleeIce$,
 
-        // проброс команд как есть (для эффекторной части)
+        // pass through commands as-is (for the effectful part)
         setOffer: db.setOffer.bind(db),
         setAnswer: db.setAnswer.bind(db),
         addCallerIceCandidate: db.addCallerIceCandidate.bind(db),

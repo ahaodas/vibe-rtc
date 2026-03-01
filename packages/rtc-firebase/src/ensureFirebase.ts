@@ -19,7 +19,7 @@ import { type Firestore, getFirestore } from 'firebase/firestore'
 
 async function waitForUser(auth: Auth): Promise<string> {
     if (auth.currentUser) {
-        await getIdToken(auth.currentUser, true) // гарантируем выпущенный токен
+        await getIdToken(auth.currentUser, true) // Ensure an issued token is available.
         return auth.currentUser.uid
     }
     await signInAnonymously(auth)
