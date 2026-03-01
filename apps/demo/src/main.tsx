@@ -19,7 +19,7 @@ const defaultStunUrls = [
     'stun:stun1.l.google.com:19302',
     'stun:stun2.l.google.com:19302',
     'stun:stun3.l.google.com:19302',
-   // 'free.expressturn.com:3478'
+    // 'free.expressturn.com:3478'
 ]
 
 const envTurnUrls = import.meta.env.VITE_TURN_URLS?.trim()
@@ -52,7 +52,7 @@ const turnServer =
         ? ({
               urls: turnUrls,
               username: turnUsername,
-              credential:  turnCredential,
+              credential: turnCredential,
           } satisfies RTCIceServer)
         : null
 
