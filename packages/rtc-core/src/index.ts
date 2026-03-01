@@ -1,4 +1,5 @@
 export * from './errors'
+export * from './connection-strategy'
 export * from './ice-config'
 export { type DebugState, RTCSignaler } from './RTCSignaler'
 export * from './types'

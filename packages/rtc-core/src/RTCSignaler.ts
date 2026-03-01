@@ -3,8 +3,16 @@
 // @ts-nocheck
 
 import type { Subscription } from 'rxjs'
+import {
+    type CandidateType,
+    type ConnectionStrategy,
+    type IcePhase,
+    getCandidateType,
+    shouldAcceptCandidate,
+    shouldSendCandidate,
+} from './connection-strategy'
 import { RTCError, RTCErrorCode, type RTCErrorPhase, toRTCError } from './errors'
-import { withDefaultIceServers } from './ice-config'
+import { DEFAULT_ICE_SERVERS, withDefaultIceServers } from './ice-config'
 import { createSignalStreams } from './signal-rx'
 import type { AnswerSDP, OfferSDP, SignalDB } from './types'
 
@@ -48,6 +56,7 @@ function mkDbg(ctx: {
 }
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
+const CONNECTING_WATCHDOG_MS = 6500
 
 type Unsub = () => void
 export type Role = 'caller' | 'callee'
@@ -62,6 +71,9 @@ export interface RTCSignalerOptions {
     fastBufferedAmountLowThreshold?: number
     reliableBufferedAmountLowThreshold?: number
     waitReadyTimeoutMs?: number
+    connectionStrategy?: ConnectionStrategy
+    lanFirstTimeoutMs?: number
+    stunServers?: RTCIceServer[]
     onMessage?: (text: string, meta: { reliable: boolean }) => void
     onConnectionStateChange?: (state: RTCPeerConnectionState) => void
     onFastOpen?: () => void
@@ -96,6 +108,18 @@ export interface DebugState {
     pendingIce: number
     retries: { soft: number; hard: number }
     timers: { softPending: boolean; hardPending: boolean; softInMs?: number; hardInMs?: number }
+    connectionStrategy: ConnectionStrategy
+    icePhase: IcePhase
+    pcGeneration: number
+    candidateStats: {
+        localSeen: Record<CandidateType, number>
+        localSent: Record<CandidateType, number>
+        localDropped: Record<CandidateType, number>
+        remoteSeen: Record<CandidateType, number>
+        remoteAccepted: Record<CandidateType, number>
+        remoteDropped: Record<CandidateType, number>
+    }
+    selectedPath?: CandidateType
     lastEvent?: string
     lastError?: string
 }
@@ -112,7 +136,8 @@ export class RTCSignaler {
     private unsubscribes: Unsub[] = [] // оставлено для совместимости, но не используется с Rx
     private connectedOrSubbed = false
 
-    private readonly rtcConfig: RTCConfiguration
+    private readonly baseRtcConfig: RTCConfiguration
+    private readonly defaultStunServers: RTCIceServer[]
     private readonly fastLabel: string
     private readonly reliableLabel: string
     private readonly fastInit: RTCDataChannelInit
@@ -150,6 +175,8 @@ export class RTCSignaler {
 
     private softTimer?: number
     private hardTimer?: number
+    private connectingWatchdogTimer?: number
+    private connectingWatchdogGeneration?: number
     private softDelayMs = 250
     private hardDelayMs = 6000
     private softRetries = 0
@@ -158,6 +185,24 @@ export class RTCSignaler {
     private phase: Phase = 'idle'
     private lastErrorText: string | undefined
     private signalingEpoch = 0
+    private remotePcGeneration: number | undefined
+    private readonly connectionStrategy: ConnectionStrategy
+    private readonly lanFirstTimeoutMs: number
+    private icePhase: IcePhase
+    private lanFirstTimer?: number
+    private dcRecoveryTimer?: number
+    private dcRecoveryGeneration?: number
+    private pcGeneration = 0
+    private controlledPeerRebuild = false
+    private selectedPath: CandidateType | undefined
+    private candidateStats = {
+        localSeen: this.makeCandidateCountMap(),
+        localSent: this.makeCandidateCountMap(),
+        localDropped: this.makeCandidateCountMap(),
+        remoteSeen: this.makeCandidateCountMap(),
+        remoteAccepted: this.makeCandidateCountMap(),
+        remoteDropped: this.makeCandidateCountMap(),
+    }
 
     // --- Новое: RxJS обёртка над сигналингом + список подписок ---
     private streams
@@ -182,7 +227,16 @@ export class RTCSignaler {
             enabled: this.debugEnabled,
         })
         this.polite = role === 'callee'
-        this.rtcConfig = withDefaultIceServers(opts.rtcConfiguration)
+        this.connectionStrategy = opts.connectionStrategy ?? 'LAN_FIRST'
+        this.lanFirstTimeoutMs = opts.lanFirstTimeoutMs ?? 1800
+        this.icePhase = this.connectionStrategy === 'LAN_FIRST' ? 'LAN' : 'STUN'
+        this.baseRtcConfig = opts.rtcConfiguration ? { ...opts.rtcConfiguration } : {}
+        this.defaultStunServers =
+            opts.stunServers && opts.stunServers.length > 0
+                ? opts.stunServers.map((server) => ({ ...server }))
+                : this.baseRtcConfig.iceServers && this.baseRtcConfig.iceServers.length > 0
+                  ? this.baseRtcConfig.iceServers.map((server) => ({ ...server }))
+                  : DEFAULT_ICE_SERVERS.map((server) => ({ ...server }))
 
         this.fastLabel = opts.fastLabel ?? 'fast'
         this.reliableLabel = opts.reliableLabel ?? 'reliable'
@@ -301,6 +355,17 @@ export class RTCSignaler {
             return
         }
         this.connectedOrSubbed = true
+        this.selectedPath = undefined
+        this.remotePcGeneration = undefined
+        this.candidateStats = {
+            localSeen: this.makeCandidateCountMap(),
+            localSent: this.makeCandidateCountMap(),
+            localDropped: this.makeCandidateCountMap(),
+            remoteSeen: this.makeCandidateCountMap(),
+            remoteAccepted: this.makeCandidateCountMap(),
+            remoteDropped: this.makeCandidateCountMap(),
+        }
+        this.icePhase = this.connectionStrategy === 'LAN_FIRST' ? 'LAN' : 'STUN'
 
         this.initPeer()
         this.emitDebug('initPeer')
@@ -311,16 +376,51 @@ export class RTCSignaler {
         this.rxSubs.push(
             remoteIce$.subscribe(async (c) => {
                 if (!this.acceptEpoch((c as any).epoch)) return
+                const remoteGeneration =
+                    typeof (c as any).pcGeneration === 'number' ? (c as any).pcGeneration : undefined
+                if (
+                    typeof remoteGeneration === 'number' &&
+                    typeof this.remotePcGeneration === 'number' &&
+                    remoteGeneration < this.remotePcGeneration
+                ) {
+                    this.dbg.p(
+                        `remote ICE dropped stale generation=${remoteGeneration} currentRemote=${this.remotePcGeneration}`,
+                    )
+                    this.emitDebug('ice-remote-drop:stale-generation')
+                    return
+                }
+                const candidateText = c.candidate || ''
+                const candidateType = getCandidateType(candidateText)
+                this.bumpCandidateCounter(this.candidateStats.remoteSeen, candidateType)
+                if (
+                    this.connectionStrategy === 'LAN_FIRST' &&
+                    this.role === 'callee' &&
+                    this.icePhase === 'LAN' &&
+                    candidateType !== 'host'
+                ) {
+                    this.dbg.p(`LAN received non-host ICE (${candidateType}) -> fallback to STUN`)
+                    this.transitionToStun('remote-candidate')
+                }
+                if (!shouldAcceptCandidate(this.icePhase, candidateText)) {
+                    this.bumpCandidateCounter(this.candidateStats.remoteDropped, candidateType)
+                    this.dbg.p(`remote ICE dropped type=${candidateType} phase=${this.icePhase}`)
+                    this.emitDebug(`ice-remote-drop:${candidateType}`)
+                    return
+                }
+                this.bumpCandidateCounter(this.candidateStats.remoteAccepted, candidateType)
                 this.dbg.p(`remote ICE from ${this.role === 'caller' ? 'callee' : 'caller'}`, {
                     buffered: !this.remoteDescSet,
-                    cand: (c.candidate || '').slice(0, 42),
+                    phase: this.icePhase,
+                    type: candidateType,
+                    cand: candidateText.slice(0, 42),
                 })
                 try {
                     if (!this.remoteDescSet) {
                         this.pendingIce.push(c)
                         return
                     }
-                    await this?.pc?.addIceCandidate(c)
+                    if (!this.pc) return
+                    await this.pc.addIceCandidate(c)
                 } catch (e) {
                     this.onError(
                         this.raiseError(
@@ -340,6 +440,7 @@ export class RTCSignaler {
         this.rxSubs.push(
             this.streams.offer$.subscribe(async (offer) => {
                 if (!this.acceptEpoch((offer as any).epoch)) return
+                let localGeneration = this.pcGeneration
                 const desc = new RTCSessionDescription(offer)
                 const sdp = desc.sdp ?? null
                 this.dbg.p('onOffer()', {
@@ -375,6 +476,25 @@ export class RTCSignaler {
                         return
                     }
 
+                    const remoteGeneration =
+                        typeof (offer as any).pcGeneration === 'number'
+                            ? (offer as any).pcGeneration
+                            : undefined
+                    this.maybePromoteCalleeToStun(remoteGeneration)
+                    localGeneration = this.pcGeneration
+                    if (
+                        typeof remoteGeneration === 'number' &&
+                        typeof this.remotePcGeneration === 'number' &&
+                        remoteGeneration < this.remotePcGeneration
+                    ) {
+                        this.dbg.p(
+                            `skip offer: stale remote generation=${remoteGeneration} current=${this.remotePcGeneration}`,
+                        )
+                        return
+                    }
+                    if (typeof remoteGeneration === 'number')
+                        this.remotePcGeneration = remoteGeneration
+
                     const collision =
                         this.makingOffer || (this.pc && this.pc.signalingState !== 'stable')
                     if (collision) {
@@ -393,12 +513,14 @@ export class RTCSignaler {
                     this.phase = 'negotiating'
                     this.emitDebug('SRD(offer) start')
 
+                    if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     try {
-                        await this.pc?.setRemoteDescription(desc)
+                        await this.pc.setRemoteDescription(desc)
                     } catch (e) {
                         this.dbg.pe(`SRD FAIL type=offer sdp=${sdpHash(sdp)}`, e)
                         throw e
                     }
+                    if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     this.remoteDescSet = true
                     this.lastHandledOfferSdp = sdp
                     this.dbg.p('SRD(offer) done, drain ICE', { pending: this.pendingIce.length })
@@ -432,9 +554,11 @@ export class RTCSignaler {
                     }
                     this.answering = true
 
+                    if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     const answer = await this.pc.createAnswer()
                     this.dbg.p('created answer', { sdp: sdpHash(answer.sdp) })
                     this.dbg.p('SLD(answer) start')
+                    if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     await this.pc.setLocalDescription(answer)
                     this.dbg.p('SLD(answer) done, publish')
                     const epochChanged = await this.refreshSignalingEpoch()
@@ -442,10 +566,14 @@ export class RTCSignaler {
                         this.dbg.p('skip answer publish after epoch sync')
                         return
                     }
+                    if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     await this.streams.setAnswer({
                         ...(answer as AnswerSDP),
                         epoch: this.signalingEpoch,
-                    })
+                        pcGeneration: localGeneration,
+                        forPcGeneration:
+                            typeof remoteGeneration === 'number' ? remoteGeneration : undefined,
+                    } as AnswerSDP)
                     this.dbg.p('answer published')
                 } catch (e) {
                     this.onError(
@@ -468,6 +596,7 @@ export class RTCSignaler {
         this.rxSubs.push(
             this.streams.answer$.subscribe(async (answer) => {
                 if (!this.acceptEpoch((answer as any).epoch)) return
+                const localGeneration = this.pcGeneration
                 const desc = new RTCSessionDescription(answer)
                 const sdp = desc.sdp ?? null
                 this.dbg.p('onAnswer()', {
@@ -501,14 +630,46 @@ export class RTCSignaler {
                         )
                         return
                     }
+                    const forPcGeneration =
+                        typeof (answer as any).forPcGeneration === 'number'
+                            ? (answer as any).forPcGeneration
+                            : undefined
+                    if (
+                        typeof forPcGeneration === 'number' &&
+                        forPcGeneration !== localGeneration
+                    ) {
+                        this.dbg.p(
+                            `skip answer: forPcGeneration=${forPcGeneration} current=${localGeneration}`,
+                        )
+                        this.emitDebug('answer-drop:forPcGeneration-mismatch')
+                        return
+                    }
+                    const remoteGeneration =
+                        typeof (answer as any).pcGeneration === 'number'
+                            ? (answer as any).pcGeneration
+                            : undefined
+                    if (
+                        typeof remoteGeneration === 'number' &&
+                        typeof this.remotePcGeneration === 'number' &&
+                        remoteGeneration < this.remotePcGeneration
+                    ) {
+                        this.dbg.p(
+                            `skip answer: stale remote generation=${remoteGeneration} current=${this.remotePcGeneration}`,
+                        )
+                        return
+                    }
+                    if (typeof remoteGeneration === 'number')
+                        this.remotePcGeneration = remoteGeneration
 
                     this.dbg.p('SRD(answer) start')
+                    if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     try {
                         await this.pc.setRemoteDescription(desc)
                     } catch (e) {
                         this.dbg.pe(`SRD FAIL type=answer sdp=${sdpHash(sdp)}`, e)
                         throw e
                     }
+                    if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     this.lastHandledAnswerSdp = sdp
                     this.remoteDescSet = true
                     this.dbg.p('SRD(answer) done, drain ICE', { pending: this.pendingIce.length })
@@ -597,7 +758,11 @@ export class RTCSignaler {
                 this.dbg.p('skip offer(iceRestart) publish after epoch sync')
                 return
             }
-            await this.streams.setOffer({ ...(offer as OfferSDP), epoch: this.signalingEpoch })
+            await this.streams.setOffer({
+                ...(offer as OfferSDP),
+                epoch: this.signalingEpoch,
+                pcGeneration: this.pcGeneration,
+            } as OfferSDP)
             this.dbg.p('offer(iceRestart) published')
         } catch (e) {
             throw this.raiseError(
@@ -621,19 +786,15 @@ export class RTCSignaler {
         }
         this.phase = 'hard-reconnect'
         this.emitDebug('hard-reconnect start')
-
-        this.cleanupPeerOnly()
-
-        this.lastHandledOfferSdp = null
-        this.lastHandledAnswerSdp = null
-        this.lastSeenOfferSdp = null
-        this.lastSeenAnswerSdp = null
-        this.lastLocalOfferSdp = null
-        this.answering = false
-        this.remoteDescSet = false
-        this.pendingIce.length = 0
-
-        this.initPeer()
+        this.controlledPeerRebuild = true
+        try {
+            this.makingOffer = false
+            this.resetNegotiationStateForPeerRebuild()
+            this.cleanupPeerOnly()
+            this.initPeer()
+        } finally {
+            this.controlledPeerRebuild = false
+        }
         this.emitDebug('hard-reconnect initPeer')
 
         const waitMs = opts.awaitReadyMs ?? this.defaultWaitReadyTimeoutMs
@@ -647,6 +808,7 @@ export class RTCSignaler {
         this.phase = 'closing'
         this.emitDebug('hangup')
         this.clearRecoveryTimers()
+        this.clearLanFirstTimer()
 
         // Rx-подписки
         for (const s of this.rxSubs.splice(0)) {
@@ -743,19 +905,290 @@ export class RTCSignaler {
     // Internals
     // ————————————————————————————————————————————————————————————————
 
+    private buildRtcConfigForPhase(phase: IcePhase): RTCConfiguration {
+        if (phase === 'LAN') {
+            return {
+                ...this.baseRtcConfig,
+                iceServers: [],
+            }
+        }
+        return withDefaultIceServers(this.baseRtcConfig, this.defaultStunServers)
+    }
+
+    private isCurrentGeneration(generation: number): boolean {
+        return this.pcGeneration === generation
+    }
+
+    private isConnectedState(): boolean {
+        const connectionState = this.pc?.connectionState
+        const iceState = this.pc?.iceConnectionState
+        return (
+            connectionState === 'connected' ||
+            iceState === 'connected' ||
+            iceState === 'completed'
+        )
+    }
+
+    private areDataChannelsOpen(): boolean {
+        return this.dcFast?.readyState === 'open' && this.dcReliable?.readyState === 'open'
+    }
+
+    private clearDcRecoveryTimer() {
+        if (!this.dcRecoveryTimer) return
+        clearTimeout(this.dcRecoveryTimer as unknown as number)
+        this.dcRecoveryTimer = undefined
+    }
+
+    private clearConnectingWatchdogTimer() {
+        if (!this.connectingWatchdogTimer) return
+        clearTimeout(this.connectingWatchdogTimer as unknown as number)
+        this.connectingWatchdogTimer = undefined
+    }
+
+    private scheduleCallerConnectingWatchdog(generation: number, reason: string) {
+        if (this.role !== 'caller') return
+        if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle') return
+        if (!this.isCurrentGeneration(generation)) return
+        if (this.isConnectedState() || this.areDataChannelsOpen()) {
+            this.clearConnectingWatchdogTimer()
+            this.connectingWatchdogGeneration = undefined
+            return
+        }
+        if (this.connectingWatchdogGeneration === generation) return
+        this.connectingWatchdogGeneration = generation
+        this.clearConnectingWatchdogTimer()
+        this.connectingWatchdogTimer = setTimeout(() => {
+            void (async () => {
+                this.connectingWatchdogTimer = undefined
+                if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle')
+                    return
+                if (!this.isCurrentGeneration(generation)) return
+                if (this.isConnectedState() || this.areDataChannelsOpen()) return
+                this.dbg.p(`connecting watchdog -> reconnectHard (${reason})`)
+                this.emitDebug('connecting-watchdog:hard-reconnect')
+                try {
+                    await this.reconnectHard({ awaitReadyMs: this.defaultWaitReadyTimeoutMs })
+                } catch (e) {
+                    this.dbg.pe('connecting watchdog failed', e)
+                } finally {
+                    if (this.connectingWatchdogGeneration === generation) {
+                        this.connectingWatchdogGeneration = undefined
+                    }
+                }
+            })()
+        }, CONNECTING_WATCHDOG_MS) as unknown as number
+    }
+
+    private scheduleCallerDcRecovery(generation: number, reason: string) {
+        if (this.role !== 'caller') return
+        if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle') return
+        if (!this.isCurrentGeneration(generation)) return
+        if (this.areDataChannelsOpen()) {
+            this.clearDcRecoveryTimer()
+            this.dcRecoveryGeneration = undefined
+            return
+        }
+        if (this.dcRecoveryGeneration === generation) return
+        this.dcRecoveryGeneration = generation
+        this.clearDcRecoveryTimer()
+        this.dcRecoveryTimer = setTimeout(() => {
+            void (async () => {
+                this.dcRecoveryTimer = undefined
+                if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle')
+                    return
+                if (!this.isCurrentGeneration(generation)) return
+                if (this.areDataChannelsOpen()) return
+                if (this.makingOffer || this.pc.signalingState !== 'stable') {
+                    this.dbg.p('dc recovery skipped (makingOffer or !stable)')
+                    this.emitDebug('dc-recovery-skip')
+                    return
+                }
+                this.dbg.p(`dc recovery -> reconnectSoft (${reason})`)
+                this.emitDebug('dc-recovery:ice-restart')
+                try {
+                    await this.reconnectSoft()
+                } catch (e) {
+                    this.dbg.pe('dc recovery failed', e)
+                }
+            })()
+        }, 1200) as unknown as number
+    }
+
+    private resetNegotiationStateForPeerRebuild() {
+        this.lastHandledOfferSdp = null
+        this.lastHandledAnswerSdp = null
+        this.lastSeenOfferSdp = null
+        this.lastSeenAnswerSdp = null
+        this.lastLocalOfferSdp = null
+        this.answering = false
+        this.remoteDescSet = false
+        this.remotePcGeneration = undefined
+        this.pendingIce.length = 0
+    }
+
+    private transitionToStun(reason: 'timeout' | 'remote-offer-generation' | 'remote-candidate') {
+        if (this.icePhase === 'STUN') return
+        this.dbg.p(`LAN -> STUN transition (${reason})`)
+        this.emitDebug(`phase-transition:LAN->STUN:${reason}`)
+        this.icePhase = 'STUN'
+        this.controlledPeerRebuild = true
+        try {
+            this.makingOffer = false
+            this.answering = false
+            this.resetNegotiationStateForPeerRebuild()
+            this.clearLanFirstTimer()
+            this.clearConnectingWatchdogTimer()
+            this.connectingWatchdogGeneration = undefined
+            this.cleanupPeerOnly()
+            this.initPeer()
+        } finally {
+            this.controlledPeerRebuild = false
+        }
+        this.emitDebug('phase=STUN')
+    }
+
+    private maybePromoteCalleeToStun(remoteGeneration: number | undefined) {
+        if (this.connectionStrategy !== 'LAN_FIRST') return
+        if (this.role !== 'callee') return
+        if (this.icePhase !== 'LAN') return
+        if (typeof remoteGeneration !== 'number') return
+        if (remoteGeneration <= this.pcGeneration) return
+        this.transitionToStun('remote-offer-generation')
+    }
+
+    private async publishOfferIfStable(
+        generation: number,
+        source: 'onnegotiationneeded' | 'bootstrap',
+    ) {
+        if (!this.isCurrentGeneration(generation)) return
+        if (!this.pc) return
+        if (this.makingOffer || this.pc.signalingState !== 'stable') {
+            this.dbg.p(`${source} skipped (makingOffer or !stable)`)
+            return
+        }
+        this.phase = 'negotiating'
+        this.emitDebug(source === 'bootstrap' ? 'negotiation-bootstrap' : 'negotiationneeded')
+
+        try {
+            this.makingOffer = true
+            const offer = await this.pc.createOffer()
+            if (!this.isCurrentGeneration(generation) || !this.pc) return
+            this.lastLocalOfferSdp = offer.sdp ?? null
+            this.dbg.p('created offer', { sdp: sdpHash(offer.sdp) })
+            this.dbg.p('SLD(offer) start')
+            await this.pc.setLocalDescription(offer)
+            if (!this.isCurrentGeneration(generation) || !this.pc) return
+            const epochChanged = await this.refreshSignalingEpoch()
+            if (epochChanged) {
+                this.dbg.p('skip offer publish after epoch sync')
+                return
+            }
+            if (!this.isCurrentGeneration(generation) || !this.pc) return
+            await this.streams.setOffer({
+                ...(offer as OfferSDP),
+                epoch: this.signalingEpoch,
+                pcGeneration: generation,
+            } as OfferSDP)
+            this.dbg.p(source === 'bootstrap' ? 'offer published (bootstrap)' : 'offer published')
+        } catch (e) {
+            this.dbg.pe('negotiation error', e)
+            this.onError(
+                this.raiseError(
+                    e,
+                    RTCErrorCode.SIGNALING_FAILED,
+                    'negotiation',
+                    true,
+                    undefined,
+                    false,
+                ),
+            )
+        } finally {
+            this.makingOffer = false
+            this.emitDebug('negotiation-done')
+        }
+    }
+
+    private startLanFirstTimer(generation: number) {
+        if (this.connectionStrategy !== 'LAN_FIRST') return
+        if (this.role !== 'caller') {
+            this.emitDebug('phase=LAN-passive')
+            return
+        }
+        this.clearLanFirstTimer()
+        this.lanFirstTimer = setTimeout(() => {
+            if (!this.isCurrentGeneration(generation)) return
+            if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle') return
+            if (this.icePhase !== 'LAN' || this.isConnectedState()) return
+            this.dbg.p(`LAN timeout -> fallback to STUN in ${this.lanFirstTimeoutMs}ms`)
+            this.transitionToStun('timeout')
+        }, this.lanFirstTimeoutMs) as unknown as number
+        this.emitDebug('phase=LAN')
+    }
+
+    private clearLanFirstTimer() {
+        if (!this.lanFirstTimer) return
+        clearTimeout(this.lanFirstTimer as unknown as number)
+        this.lanFirstTimer = undefined
+    }
+
+    private makeCandidateCountMap(): Record<CandidateType, number> {
+        return { host: 0, srflx: 0, relay: 0, unknown: 0 }
+    }
+
+    private bumpCandidateCounter(counter: Record<CandidateType, number>, type: CandidateType) {
+        counter[type] = (counter[type] ?? 0) + 1
+    }
+
+    private captureSelectedPath() {
+        if (this.selectedPath) return
+        if (this.icePhase === 'LAN') {
+            this.selectedPath = 'host'
+            this.dbg.p('selected path inferred host (LAN phase)')
+            this.emitDebug('selected-path:host')
+            return
+        }
+        if (this.candidateStats.remoteAccepted.srflx > 0 || this.candidateStats.localSent.srflx > 0) {
+            this.selectedPath = 'srflx'
+        } else if (
+            this.candidateStats.remoteAccepted.relay > 0 ||
+            this.candidateStats.localSent.relay > 0
+        ) {
+            this.selectedPath = 'relay'
+        } else if (this.candidateStats.remoteAccepted.host > 0 || this.candidateStats.localSent.host > 0) {
+            this.selectedPath = 'host'
+        } else {
+            this.selectedPath = 'unknown'
+        }
+        this.dbg.p(`selected path inferred ${this.selectedPath}`)
+        this.emitDebug(`selected-path:${this.selectedPath}`)
+    }
+
     private initPeer() {
         this.dbg.p('initPeer()')
-        this.pc = new RTCPeerConnection(this.rtcConfig)
+        this.clearDcRecoveryTimer()
+        this.dcRecoveryGeneration = undefined
+        this.clearConnectingWatchdogTimer()
+        this.connectingWatchdogGeneration = undefined
+        const generation = ++this.pcGeneration
+        const rtcConfig = this.buildRtcConfigForPhase(this.icePhase)
+        this.pc = new RTCPeerConnection(rtcConfig)
+        this.dbg.p(`pc created generation=${generation} phase=${this.icePhase}`, {
+            iceServers: rtcConfig.iceServers ?? [],
+        })
 
         this.remoteDescSet = false
         this.pendingIce.length = 0
         this.emitDebug('pc-created')
+        if (this.icePhase === 'LAN') this.startLanFirstTimer(generation)
+        else this.clearLanFirstTimer()
 
         this.pc.addEventListener('signalingstatechange', () => {
+            if (!this.isCurrentGeneration(generation)) return
             this.dbg.p('signalingstatechange')
             this.emitDebug('signalingstatechange')
         })
         this.pc.addEventListener('iceconnectionstatechange', () => {
+            if (!this.isCurrentGeneration(generation)) return
             this.dbg.p(`ice=${this.pc?.iceConnectionState}`)
             const s = this.pc?.iceConnectionState
             this.emitDebug(`ice=${s}`)
@@ -767,12 +1200,28 @@ export class RTCSignaler {
                 this.softDelayMs = 250
                 this.hardDelayMs = 6000
                 this.clearRecoveryTimers()
+                this.clearLanFirstTimer()
+                this.captureSelectedPath()
+                this.scheduleCallerDcRecovery(generation, 'ice=connected')
+                this.clearConnectingWatchdogTimer()
+                this.connectingWatchdogGeneration = undefined
                 this.emitDebug('connected')
             }
+            if (s === 'completed') {
+                this.clearLanFirstTimer()
+                this.captureSelectedPath()
+                this.scheduleCallerDcRecovery(generation, 'ice=completed')
+                this.clearConnectingWatchdogTimer()
+                this.connectingWatchdogGeneration = undefined
+                this.emitDebug('ice=completed')
+            }
+            if (s === 'checking') this.scheduleCallerConnectingWatchdog(generation, 'ice=checking')
+            if (this.controlledPeerRebuild) return
             if (this.role === 'caller' && s === 'disconnected') this.scheduleSoftThenMaybeHard()
             if (this.role === 'caller' && (s === 'failed' || s === 'closed')) this.tryHardNow()
         })
         this.pc.addEventListener('connectionstatechange', () => {
+            if (!this.isCurrentGeneration(generation)) return
             const st = this.pc!.connectionState
             this.dbg.p('connection=' + st)
             this.onConnectionStateChange(st)
@@ -785,8 +1234,16 @@ export class RTCSignaler {
                 this.softDelayMs = 250
                 this.hardDelayMs = 6000
                 this.clearRecoveryTimers()
+                this.clearLanFirstTimer()
+                this.captureSelectedPath()
+                this.scheduleCallerDcRecovery(generation, 'connection=connected')
+                this.clearConnectingWatchdogTimer()
+                this.connectingWatchdogGeneration = undefined
                 this.emitDebug('connected')
             }
+            if (st === 'connecting')
+                this.scheduleCallerConnectingWatchdog(generation, 'connection=connecting')
+            if (this.controlledPeerRebuild) return
             if (this.role === 'caller' && st === 'disconnected') this.scheduleSoftThenMaybeHard()
             if (this.role === 'caller' && (st === 'failed' || st === 'closed')) this.tryHardNow()
         })
@@ -814,12 +1271,23 @@ export class RTCSignaler {
         }
 
         this.pc.onicecandidate = async (ev) => {
+            if (!this.isCurrentGeneration(generation)) return
             if (!ev.candidate) return
+            const candidateText = ev.candidate.candidate || ''
+            const candidateType = getCandidateType(candidateText)
+            this.bumpCandidateCounter(this.candidateStats.localSeen, candidateType)
+            if (!shouldSendCandidate(this.icePhase, candidateText)) {
+                this.bumpCandidateCounter(this.candidateStats.localDropped, candidateType)
+                this.dbg.p(`local ICE dropped type=${candidateType} phase=${this.icePhase}`)
+                this.emitDebug(`ice-local-drop:${candidateType}`)
+                return
+            }
+            this.bumpCandidateCounter(this.candidateStats.localSent, candidateType)
             try {
-                // Передаём "как есть" RTCIceCandidate — адаптер сам приведёт к init перед записью
+                // Keep RTCIceCandidate object for adapters that rely on ice.toJSON().
                 const ice: RTCIceCandidate = ev.candidate
-                if (this.role === 'caller') await this.streams.addCallerIceCandidate(ice)
-                else await this.streams.addCalleeIceCandidate(ice)
+                if (this.role === 'caller') await this.streams.addCallerIceCandidate(ice as any)
+                else await this.streams.addCalleeIceCandidate(ice as any)
             } catch (e) {
                 this.onError(
                     this.raiseError(
@@ -834,45 +1302,15 @@ export class RTCSignaler {
             }
         }
 
-        this.pc.onnegotiationneeded = async () => {
-            if (!this.pc) return
-            if (this.makingOffer || this.pc.signalingState !== 'stable') {
-                this.dbg.p('onnegotiationneeded skipped (makingOffer or !stable)')
-                return
-            }
-            this.phase = 'negotiating'
-            this.emitDebug('negotiationneeded')
+        this.pc.onnegotiationneeded = () => {
+            void this.publishOfferIfStable(generation, 'onnegotiationneeded')
+        }
 
-            try {
-                this.makingOffer = true
-                const offer = await this.pc.createOffer()
-                this.lastLocalOfferSdp = offer.sdp ?? null
-                this.dbg.p('created offer', { sdp: sdpHash(offer.sdp) })
-                this.dbg.p('SLD(offer) start')
-                await this.pc.setLocalDescription(offer)
-                const epochChanged = await this.refreshSignalingEpoch()
-                if (epochChanged) {
-                    this.dbg.p('skip offer publish after epoch sync')
-                    return
-                }
-                await this.streams.setOffer({ ...(offer as OfferSDP), epoch: this.signalingEpoch })
-                this.dbg.p('offer published')
-            } catch (e) {
-                this.dbg.pe('negotiation error', e)
-                this.onError(
-                    this.raiseError(
-                        e,
-                        RTCErrorCode.SIGNALING_FAILED,
-                        'negotiation',
-                        true,
-                        undefined,
-                        false,
-                    ),
-                )
-            } finally {
-                this.makingOffer = false
-                this.emitDebug('negotiation-done')
-            }
+        if (this.role === 'caller') {
+            // Fail-safe for very fast reload races where negotiationneeded can be missed.
+            setTimeout(() => {
+                void this.publishOfferIfStable(generation, 'bootstrap')
+            }, 0)
         }
     }
 
@@ -890,6 +1328,10 @@ export class RTCSignaler {
                 this.onFastOpen()
             }
             this.resolveChannelWaiters(ch, reliable)
+            if (this.areDataChannelsOpen()) {
+                this.clearDcRecoveryTimer()
+                this.dcRecoveryGeneration = undefined
+            }
             this.emitDebug(`dc-open:${ch.label}`)
         }
         ch.onclose = () => {
@@ -1011,6 +1453,11 @@ export class RTCSignaler {
 
     private cleanupPeerOnly() {
         this.dbg.p('cleanupPeerOnly')
+        this.clearLanFirstTimer()
+        this.clearDcRecoveryTimer()
+        this.dcRecoveryGeneration = undefined
+        this.clearConnectingWatchdogTimer()
+        this.connectingWatchdogGeneration = undefined
         try {
             this.dcFast?.close()
         } catch {}
@@ -1045,6 +1492,8 @@ export class RTCSignaler {
     private scheduleSoftThenMaybeHard() {
         if (!this.roomId || this.phase === 'closing' || this.phase === 'idle') return
         if (!this.pc || this.pc.signalingState === 'closed') return
+        this.clearConnectingWatchdogTimer()
+        this.connectingWatchdogGeneration = undefined
         this.clearRecoveryTimers()
         this.upkeepRecoveryBackoff()
         this.phase = 'soft-reconnect'
@@ -1109,6 +1558,7 @@ export class RTCSignaler {
             this.lastLocalOfferSdp = null
             this.answering = false
             this.remoteDescSet = false
+            this.remotePcGeneration = undefined
             this.pendingIce.length = 0
             if (this.pc) {
                 this.cleanupPeerOnly()
@@ -1174,6 +1624,11 @@ export class RTCSignaler {
                 softInMs: this.softDelayMs,
                 hardInMs: this.hardDelayMs,
             },
+            connectionStrategy: this.connectionStrategy,
+            icePhase: this.icePhase,
+            pcGeneration: this.pcGeneration,
+            candidateStats: this.candidateStats,
+            selectedPath: this.selectedPath,
             lastEvent,
             lastError: this.lastErrorText,
         }

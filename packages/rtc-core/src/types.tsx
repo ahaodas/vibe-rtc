@@ -1,5 +1,11 @@
-export type OfferSDP = { type: 'offer'; sdp: string; epoch?: number }
-export type AnswerSDP = { type: 'answer'; sdp: string; epoch?: number }
+export type OfferSDP = { type: 'offer'; sdp: string; epoch?: number; pcGeneration?: number }
+export type AnswerSDP = {
+    type: 'answer'
+    sdp: string
+    epoch?: number
+    pcGeneration?: number
+    forPcGeneration?: number
+}
 
 export type RoomDoc = {
     creatorUid: string | null
@@ -17,6 +23,7 @@ export type RoomDoc = {
 
 export type CandidateDoc = RTCIceCandidateInit & {
     epoch?: number
+    pcGeneration?: number
     createdAt?: unknown // serverTimestamp()
 }
 

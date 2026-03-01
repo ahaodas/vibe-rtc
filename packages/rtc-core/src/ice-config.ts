@@ -1,8 +1,6 @@
-const DEFAULT_STUN_URLS = ['stun:stun.l.google.com:19302']
-
 export const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
     {
-        urls: DEFAULT_STUN_URLS,
+        urls: 'stun:stun.l.google.com:19302',
     },
 ]
 

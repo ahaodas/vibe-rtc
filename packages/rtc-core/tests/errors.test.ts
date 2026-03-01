@@ -61,6 +61,20 @@ class FakeRTCPeerConnection {
     createDataChannel(label: string): RTCDataChannel {
         return new FakeDataChannel(label) as unknown as RTCDataChannel
     }
+    async createOffer(): Promise<RTCSessionDescriptionInit> {
+        return { type: 'offer', sdp: 'v=0\r\n' }
+    }
+    async setLocalDescription(desc?: RTCSessionDescriptionInit | null): Promise<void> {
+        this.localDescription = (desc ?? null) as RTCSessionDescription | null
+        if (desc?.type === 'offer') this.signalingState = 'have-local-offer'
+        if (desc?.type === 'answer') this.signalingState = 'stable'
+    }
+    async setRemoteDescription(desc: RTCSessionDescriptionInit): Promise<void> {
+        this.remoteDescription = desc as RTCSessionDescription
+        if (desc.type === 'offer') this.signalingState = 'have-remote-offer'
+        if (desc.type === 'answer') this.signalingState = 'stable'
+    }
+    async addIceCandidate(): Promise<void> {}
     close(): void {
         this.connectionState = 'closed'
         this.iceConnectionState = 'closed'

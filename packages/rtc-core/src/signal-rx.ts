@@ -3,8 +3,12 @@
 
 import { distinctUntilChanged, map, Observable, shareReplay } from 'rxjs'
 
-type SignalDescription = RTCSessionDescriptionInit & { epoch?: number }
-type SignalIce = RTCIceCandidateInit & { epoch?: number }
+type SignalDescription = RTCSessionDescriptionInit & {
+    epoch?: number
+    pcGeneration?: number
+    forPcGeneration?: number
+}
+type SignalIce = RTCIceCandidateInit & { epoch?: number; pcGeneration?: number }
 
 export interface SignalDB {
     // управление комнатой
