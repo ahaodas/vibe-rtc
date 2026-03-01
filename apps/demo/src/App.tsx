@@ -323,8 +323,8 @@ export function App() {
                     <h1>VIBE-RTC DEMO</h1>
                     <section className="initialInfo">
                         <p className="initialInfoText">
-                            This page demonstrates LAN-first WebRTC connection setup, with automatic STUN fallback when direct local
-                            candidates do not connect fast enough.
+                            This page demonstrates LAN-first WebRTC connection setup, with automatic
+                            STUN fallback when direct local candidates do not connect fast enough.
                         </p>
                         <p className="initialInfoText">
                             The demo is tuned to be resilient to caller/callee page reload races:
