@@ -68,6 +68,7 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
     return (
         <VibeRTCProvider
             rtcConfiguration={rtcConfig}
+            connectionStrategy="LAN_FIRST"
             renderLoading={<div>Custom boot…</div>}
             renderBootError={(e) => <div style={{ color: 'crimson' }}>{e.message}</div>}
             createSignalServer={createSignalServer}
