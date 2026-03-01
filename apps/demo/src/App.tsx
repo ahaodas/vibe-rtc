@@ -50,6 +50,7 @@ export function App() {
     const createProgressTrackRef = useRef<HTMLDivElement | null>(null)
     const connectProgressTrackRef = useRef<HTMLDivElement | null>(null)
     const prevOverallStatusRef = useRef<string | null>(null)
+    const lastConsoleDebugKeyRef = useRef<string | null>(null)
     const [hashPath, setHashPathState] = useState(readHashPath)
 
     useEffect(() => {
@@ -197,6 +198,44 @@ export function App() {
         }
         prevOverallStatusRef.current = rtc.overallStatus
     }, [mode, rtc.overallStatus])
+
+    useEffect(() => {
+        const ds = rtc.debugState
+        if (!ds) return
+        const key = [
+            ds.pcGeneration,
+            ds.phase,
+            ds.lastEvent,
+            ds.pcState,
+            ds.iceState,
+            ds.signalingState,
+            ds.fast?.state,
+            ds.reliable?.state,
+            ds.icePhase,
+        ].join('|')
+        if (lastConsoleDebugKeyRef.current === key) return
+        lastConsoleDebugKeyRef.current = key
+
+        console.info('[vibe-rtc demo][rtc]', {
+            overallStatus: rtc.overallStatus,
+            overallStatusText: rtc.overallStatusText,
+            debugState: ds,
+        })
+    }, [rtc.debugState, rtc.overallStatus, rtc.overallStatusText])
+
+    useEffect(() => {
+        if (!rtc.lastError) return
+        const payload = {
+            code: rtc.lastError.code,
+            message: rtc.lastError.message,
+            at: rtc.lastError.at,
+        }
+        if (rtc.lastError.code === 'AUTH_REQUIRED') {
+            console.error('[vibe-rtc demo][auth-required]', payload)
+            return
+        }
+        console.error('[vibe-rtc demo][error]', payload)
+    }, [rtc.lastError])
 
     const createTrackWidthPx = Number.isFinite(createProgressTrackWidthPx)
         ? createProgressTrackWidthPx

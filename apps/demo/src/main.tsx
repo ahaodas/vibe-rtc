@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { App } from '@/App'
 import '@/styles.css'
 
+import type { SignalDB } from '@vibe-rtc/rtc-core'
 import { ensureFirebase, FBAdapter } from '@vibe-rtc/rtc-firebase'
 import { VibeRTCProvider } from '@vibe-rtc/rtc-react'
 
@@ -52,8 +53,90 @@ const rtcConfig: RTCConfiguration = {
 }
 const PROGRESS_STEP_PX = 10
 const buildSha = import.meta.env.VITE_BUILD_SHA?.trim() || 'local-dev'
+let signalingOpSeq = 0
 
 console.info(`[vibe-rtc demo] build=${buildSha}`)
+
+function authSnapshot(auth: {
+    currentUser?: { uid?: string | null; isAnonymous?: boolean } | null
+}) {
+    const user = auth.currentUser
+    return {
+        uid: user?.uid ?? null,
+        isAnonymous: user?.isAnonymous ?? null,
+    }
+}
+
+function toLogArg(value: unknown): unknown {
+    if (typeof value === 'function') return '[Function]'
+    if (value == null) return value
+    if (typeof value === 'string') return value.length > 200 ? `${value.slice(0, 200)}...` : value
+    if (typeof value !== 'object') return value
+    try {
+        return JSON.parse(JSON.stringify(value))
+    } catch {
+        return '[UnserializableObject]'
+    }
+}
+
+function wrapSignalDbWithConsoleDebug(
+    db: SignalDB,
+    getAuth: () => { uid: string | null; isAnonymous: boolean | null },
+): SignalDB {
+    return new Proxy(db, {
+        get(target, prop, receiver) {
+            const value = Reflect.get(target, prop, receiver)
+            if (typeof value !== 'function') return value
+
+            return (...args: unknown[]) => {
+                const opId = ++signalingOpSeq
+                const method = String(prop)
+                const safeArgs = args.map(toLogArg)
+
+                console.info(`[vibe-rtc demo][signal:${opId}] ${method}:start`, {
+                    args: safeArgs,
+                    auth: getAuth(),
+                })
+
+                try {
+                    const result = value.apply(target, args)
+                    if (
+                        result &&
+                        (typeof result === 'object' || typeof result === 'function') &&
+                        'then' in result &&
+                        typeof (result as Promise<unknown>).then === 'function'
+                    ) {
+                        return (result as Promise<unknown>)
+                            .then((resolved) => {
+                                console.info(`[vibe-rtc demo][signal:${opId}] ${method}:ok`, {
+                                    auth: getAuth(),
+                                })
+                                return resolved
+                            })
+                            .catch((error) => {
+                                console.error(`[vibe-rtc demo][signal:${opId}] ${method}:error`, {
+                                    auth: getAuth(),
+                                    error,
+                                })
+                                throw error
+                            })
+                    }
+
+                    console.info(`[vibe-rtc demo][signal:${opId}] ${method}:ok`, {
+                        auth: getAuth(),
+                    })
+                    return result
+                } catch (error) {
+                    console.error(`[vibe-rtc demo][signal:${opId}] ${method}:error`, {
+                        auth: getAuth(),
+                        error,
+                    })
+                    throw error
+                }
+            }
+        },
+    }) as SignalDB
+}
 
 function BootLoadingOverlay() {
     const [trackWidthPx, setTrackWidthPx] = useState(0)
@@ -113,8 +196,13 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
             projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
             appId: import.meta.env.VITE_FIREBASE_APP_ID,
         }
+        console.info('[vibe-rtc demo][auth] ensureFirebase:start')
         const { db, auth } = await ensureFirebase(fbConfig)
-        return new FBAdapter(db, auth)
+        console.info('[vibe-rtc demo][auth] ensureFirebase:ok', authSnapshot(auth))
+        const adapter = new FBAdapter(db, auth)
+        return wrapSignalDbWithConsoleDebug(adapter as unknown as SignalDB, () =>
+            authSnapshot(auth),
+        )
     }
 
     return (
