@@ -34,6 +34,7 @@ import { VibeRTCProvider } from '@vibe-rtc/rtc-react'
 ```
 
 `rtcConfiguration` is optional. If not provided, `rtc-core` default ICE servers are used.
+`connectionStrategy` is optional (`LAN_FIRST` by default in `rtc-core`).
 
 ## Hook API
 

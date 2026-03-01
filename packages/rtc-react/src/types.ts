@@ -1,4 +1,4 @@
-import type { DebugState, RTCSignaler, SignalDB } from '@vibe-rtc/rtc-core'
+import type { ConnectionStrategy, DebugState, RTCSignaler, SignalDB } from '@vibe-rtc/rtc-core'
 import type React from 'react'
 
 export type VibeRTCStatus =
@@ -65,6 +65,8 @@ export interface VibeRTCProviderProps {
     createSignalServer?: () => Promise<SignalDB>
     /** RTC конфиг для PeerConnection */
     rtcConfiguration?: RTCConfiguration
+    /** ICE connection strategy (`LAN_FIRST` by default in rtc-core) */
+    connectionStrategy?: ConnectionStrategy
 
     /** Кастомный компонент/узел загрузки */
     renderLoading?: React.ReactNode

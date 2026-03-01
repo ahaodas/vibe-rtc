@@ -19,6 +19,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         signalServer,
         createSignalServer,
         rtcConfiguration,
+        connectionStrategy,
         renderLoading,
         renderBootError,
         children,
@@ -74,7 +75,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     const ensureSignaler = useCallback(
         async (role: 'caller' | 'callee'): Promise<RTCSignaler> => {
             const db = await getSignalDB()
-            const s = new RTCSignaler(role, db, { rtcConfiguration })
+            const s = new RTCSignaler(role, db, { rtcConfiguration, connectionStrategy })
 
             s.setConnectionStateHandler((pcState) => {
                 dispatch({ type: 'SET_STATUS', status: mapPcState(pcState) })
@@ -101,7 +102,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             signalerRef.current = s
             return s
         },
-        [getSignalDB, rtcConfiguration],
+        [getSignalDB, rtcConfiguration, connectionStrategy],
     )
 
     const stopRoomWatch = useCallback(() => {
