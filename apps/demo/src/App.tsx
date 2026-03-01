@@ -353,6 +353,7 @@ export function App() {
                         {createPending ? 'Creating...' : 'Create Room'}
                     </button>
                     <hr className="cs-hr" />
+                    <p className={`statusLine status-${rtc.overallStatus}`}>{statusText}</p>
                     <p className="credits">
                         UI skin powered by{' '}
                         <a
