@@ -728,51 +728,53 @@ export function App() {
                 !channelReadyForMessages &&
                 qrModalOpen &&
                 calleeUrl && (
-                <div className="qrModalBackdrop" role="dialog" aria-modal="true">
-                    <section className="qrModal">
-                        <div className="qrModalHeader">
-                            <h2 className="qrModalTitle">Scan this QR code on callee device:</h2>
-                            <button
-                                type="button"
-                                className="cs-btn close"
-                                aria-label="Hide QR dialog"
-                                onClick={() => setQrModalOpen(false)}
-                            />
-                        </div>
-                        <div className="roomRow qrRoomRow">
-                            <label htmlFor="qr-room-id" className="roomLabel">
-                                Room ID
-                            </label>
-                            <div className="roomRowMain">
-                                <input
-                                    id="qr-room-id"
-                                    className="roomInput cs-input"
-                                    readOnly
-                                    value={routeRoomId}
+                    <div className="qrModalBackdrop" role="dialog" aria-modal="true">
+                        <section className="qrModal">
+                            <div className="qrModalHeader">
+                                <h2 className="qrModalTitle">
+                                    Scan this QR code on callee device:
+                                </h2>
+                                <button
+                                    type="button"
+                                    className="cs-btn close"
+                                    aria-label="Hide QR dialog"
+                                    onClick={() => setQrModalOpen(false)}
                                 />
                             </div>
-                        </div>
-                        <section className="qrContent">
-                            {calleeQrDataUrl ? (
-                                <a
-                                    href={calleeUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="qrLink"
-                                >
-                                    <img
-                                        className="qrImage"
-                                        src={calleeQrDataUrl}
-                                        alt="Callee link QR code"
+                            <div className="roomRow qrRoomRow">
+                                <label htmlFor="qr-room-id" className="roomLabel">
+                                    Room ID
+                                </label>
+                                <div className="roomRowMain">
+                                    <input
+                                        id="qr-room-id"
+                                        className="roomInput cs-input"
+                                        readOnly
+                                        value={routeRoomId}
                                     />
-                                </a>
-                            ) : (
-                                <div className="qrLoading">Generating QR...</div>
-                            )}
+                                </div>
+                            </div>
+                            <section className="qrContent">
+                                {calleeQrDataUrl ? (
+                                    <a
+                                        href={calleeUrl}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="qrLink"
+                                    >
+                                        <img
+                                            className="qrImage"
+                                            src={calleeQrDataUrl}
+                                            alt="Callee link QR code"
+                                        />
+                                    </a>
+                                ) : (
+                                    <div className="qrLoading">Generating QR...</div>
+                                )}
+                            </section>
                         </section>
-                    </section>
-                </div>
-            )}
+                    </div>
+                )}
             <section className="card chatPageCard">
                 <header className="screenHeader">
                     <div className="screenHeaderTop">
@@ -819,15 +821,15 @@ export function App() {
                                 !takeoverModalOpen &&
                                 !channelReadyForMessages &&
                                 calleeUrl && (
-                                <button
-                                    type="button"
-                                    className="cs-btn roomQrBtn"
-                                    onClick={() => setQrModalOpen(true)}
-                                    disabled={qrModalOpen}
-                                >
-                                    Show QR
-                                </button>
-                            )}
+                                    <button
+                                        type="button"
+                                        className="cs-btn roomQrBtn"
+                                        onClick={() => setQrModalOpen(true)}
+                                        disabled={qrModalOpen}
+                                    >
+                                        Show QR
+                                    </button>
+                                )}
                         </div>
                     </div>
                     <p className={`statusLine status-${rtc.overallStatus}`}>

@@ -166,7 +166,10 @@ async function flushMessages(page: Page, who: Who) {
 }
 
 async function takeMessages(page: Page, who: Who): Promise<string[]> {
-    return await page.evaluate((w) => (window as unknown as E2EWindow)[w]?.takeMessages() ?? [], who)
+    return await page.evaluate(
+        (w) => (window as unknown as E2EWindow)[w]?.takeMessages() ?? [],
+        who,
+    )
 }
 
 async function sendReliable(page: Page, who: Who, text: string) {
@@ -578,7 +581,10 @@ test.describe('takeover (same role, last page wins)', () => {
         await assertRoleStaysDisconnected(pCallee, 'callee')
     })
 
-    test('third page takeover does not break active pair stability', async ({ context, baseURL }) => {
+    test('third page takeover does not break active pair stability', async ({
+        context,
+        baseURL,
+    }) => {
         if (!baseURL) throw new Error('Playwright baseURL is required for rtc e2e tests')
 
         const pCaller2 = await context.newPage()
