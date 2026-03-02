@@ -101,8 +101,7 @@ export function App() {
             ? Math.round(netRttRaw)
             : null
     const selectedPath = rtc.debugState?.selectedPath
-    const isRelayRoute =
-        rtc.debugState?.netRtt?.route?.isRelay === true || selectedPath === 'relay'
+    const isRelayRoute = rtc.debugState?.netRtt?.route?.isRelay === true || selectedPath === 'relay'
     const routeLabel =
         selectedPath === 'host' || selectedPath === 'srflx'
             ? 'DIRECT'
@@ -205,10 +204,7 @@ export function App() {
 
         if (isRelayRoute) {
             highDirectStreakRef.current = 0
-            showWarning(
-                'relay',
-                'Using TURN/relay. May increase latency even on local network.',
-            )
+            showWarning('relay', 'Using TURN/relay. May increase latency even on local network.')
             return
         }
 
@@ -579,20 +575,20 @@ export function App() {
                     <div className="screenHeaderTop">
                         <h1>{mode.toUpperCase()}</h1>
                         <div className="screenHeaderActions">
-                                <div className={`latencyHud net-${netLatencyTone}`}>
-                                    <div className="latencyNetLine">
-                                        NET: {netRttMs == null ? '--' : `${netRttMs} ms`}
-                                    </div>
-                                    <div className="latencyAppLine">
-                                        APP: {appPingMs == null ? '--' : `${appPingMs} ms`}
-                                    </div>
-                                    <div className="latencyAppLine">
-                                        ROUTE: {routeLabel}
-                                        {isRelayRoute && (
-                                            <span className="latencyRelayTag">(TURN)</span>
-                                        )}
-                                    </div>
+                            <div className={`latencyHud net-${netLatencyTone}`}>
+                                <div className="latencyNetLine">
+                                    NET: {netRttMs == null ? '--' : `${netRttMs} ms`}
                                 </div>
+                                <div className="latencyAppLine">
+                                    APP: {appPingMs == null ? '--' : `${appPingMs} ms`}
+                                </div>
+                                <div className="latencyAppLine">
+                                    ROUTE: {routeLabel}
+                                    {isRelayRoute && (
+                                        <span className="latencyRelayTag">(TURN)</span>
+                                    )}
+                                </div>
+                            </div>
                             <button
                                 type="button"
                                 className="cs-btn close screenCloseBtn"
