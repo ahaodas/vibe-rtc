@@ -5,7 +5,9 @@ interface ImportMetaEnv {
     readonly VITE_FIREBASE_AUTH_DOMAIN: string
     readonly VITE_FIREBASE_PROJECT_ID: string
     readonly VITE_FIREBASE_APP_ID: string
+    readonly VITE_STUN_URLS?: string
     readonly VITE_TURN_URLS?: string
+    readonly VITE_TURN_USER?: string
     readonly VITE_TURN_USERNAME?: string
     readonly VITE_TURN_CREDENTIAL?: string
     readonly VITE_METERED_USER?: string
