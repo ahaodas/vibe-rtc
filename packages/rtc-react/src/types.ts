@@ -82,6 +82,8 @@ export interface VibeRTCProviderProps {
     rtcConfiguration?: RTCConfiguration
     /** ICE connection strategy (`LAN_FIRST` by default in rtc-core) */
     connectionStrategy?: ConnectionStrategy
+    /** LAN-first timeout before STUN fallback, ms */
+    lanFirstTimeoutMs?: number
 
     /** Custom loading component/node */
     renderLoading?: React.ReactNode
