@@ -2,13 +2,24 @@
 // Thin RxJS wrapper over the existing SignalDB (without rewriting the adapter)
 
 import { distinctUntilChanged, map, Observable, shareReplay } from 'rxjs'
+import type { IcePhase } from './connection-strategy'
 
 type SignalDescription = RTCSessionDescriptionInit & {
     epoch?: number
+    sessionId?: string
     pcGeneration?: number
     forPcGeneration?: number
+    gen?: number
+    forGen?: number
+    icePhase?: IcePhase
 }
-type SignalIce = RTCIceCandidateInit & { epoch?: number; pcGeneration?: number }
+type SignalIce = RTCIceCandidateInit & {
+    epoch?: number
+    sessionId?: string
+    pcGeneration?: number
+    gen?: number
+    icePhase?: IcePhase
+}
 
 export interface SignalDB {
     // room control
@@ -45,7 +56,7 @@ const sdpHash = (s?: string | null) => {
 }
 
 const iceKey = (c: SignalIce) =>
-    `${c.epoch ?? -1}|${c.pcGeneration ?? -1}|${c.candidate ?? ''}|${c.sdpMid ?? ''}|${c.sdpMLineIndex ?? -1}`
+    `${c.epoch ?? -1}|${c.sessionId ?? 'n/a'}|${c.icePhase ?? 'n/a'}|${c.candidate ?? ''}|${c.sdpMid ?? ''}|${c.sdpMLineIndex ?? -1}`
 
 // --- Base subscribe -> Observable converter ---
 function fromSubscribe<T>(sub: (cb: (v: T) => void) => () => void): Observable<T> {
@@ -71,7 +82,7 @@ export function createSignalStreams(db: SignalDB) {
             (d) =>
                 ({
                     ...d,
-                    __h: `${d.epoch ?? -1}:${sdpHash(d.sdp ?? null)}`,
+                    __h: `${d.epoch ?? -1}:${d.sessionId ?? 'n/a'}:${d.icePhase ?? 'n/a'}:${sdpHash(d.sdp ?? null)}`,
                 }) as SignalDescription & { __h: string },
         ),
         distinctUntilChanged((a, b) => a.__h === b.__h),
@@ -84,7 +95,7 @@ export function createSignalStreams(db: SignalDB) {
             (d) =>
                 ({
                     ...d,
-                    __h: `${d.epoch ?? -1}:${sdpHash(d.sdp ?? null)}`,
+                    __h: `${d.epoch ?? -1}:${d.sessionId ?? 'n/a'}:${d.icePhase ?? 'n/a'}:${sdpHash(d.sdp ?? null)}`,
                 }) as SignalDescription & { __h: string },
         ),
         distinctUntilChanged((a, b) => a.__h === b.__h),

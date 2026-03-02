@@ -174,6 +174,117 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         ])
     })
 
+    it('uses strict LAN -> STUN_ONLY -> TURN_ENABLED sequence when TURN servers are configured', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'LAN_FIRST',
+            lanFirstTimeoutMs: 20,
+            stunOnlyTimeoutMs: 30,
+            rtcConfiguration: {
+                iceServers: [
+                    { urls: ['stun:stun1.example.com:3478', 'turn:turn.example.com:3478'] },
+                    {
+                        urls: 'turns:turn.example.com:5349?transport=tcp',
+                        username: 'u',
+                        credential: 'c',
+                    },
+                ],
+            },
+        })
+        await signaler.joinRoom('room-3phase')
+        await signaler.connect()
+
+        expect(FakeRTCPeerConnection.instances.length).toBe(1)
+        expect(FakeRTCPeerConnection.instances[0].config.iceServers).toEqual([])
+
+        await vi.advanceTimersByTimeAsync(25)
+        expect(FakeRTCPeerConnection.instances.length).toBe(2)
+        expect(FakeRTCPeerConnection.instances[1].config.iceServers).toEqual([
+            { urls: ['stun:stun1.example.com:3478'] },
+        ])
+        expect(FakeRTCPeerConnection.instances[1].config.iceTransportPolicy).toBe('all')
+
+        await vi.advanceTimersByTimeAsync(35)
+        expect(FakeRTCPeerConnection.instances.length).toBe(3)
+        expect(FakeRTCPeerConnection.instances[2].config.iceServers).toEqual([
+            { urls: ['turn:turn.example.com:3478'] },
+            {
+                urls: 'turns:turn.example.com:5349?transport=tcp',
+                username: 'u',
+                credential: 'c',
+            },
+        ])
+        expect(FakeRTCPeerConnection.instances[2].config.iceTransportPolicy).toBe('all')
+    })
+
+    it('keeps STUN_ONLY phase when TURN servers are not configured', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'LAN_FIRST',
+            lanFirstTimeoutMs: 20,
+            stunOnlyTimeoutMs: 30,
+            rtcConfiguration: {
+                iceServers: [{ urls: 'stun:stun1.example.com:3478' }],
+            },
+        })
+        await signaler.joinRoom('room-no-turn')
+        await signaler.connect()
+
+        await vi.advanceTimersByTimeAsync(25)
+        expect(FakeRTCPeerConnection.instances.length).toBe(2)
+        expect(FakeRTCPeerConnection.instances[1].config.iceServers).toEqual([
+            { urls: 'stun:stun1.example.com:3478' },
+        ])
+
+        await vi.advanceTimersByTimeAsync(3_000)
+        expect(FakeRTCPeerConnection.instances.length).toBe(2)
+    })
+
+    it('does not switch to TURN_ENABLED immediately on STUN_ONLY disconnected', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'LAN_FIRST',
+            lanFirstTimeoutMs: 20,
+            stunOnlyTimeoutMs: 30,
+            rtcConfiguration: {
+                iceServers: [
+                    { urls: 'stun:stun1.example.com:3478' },
+                    { urls: 'turn:turn.example.com:3478', username: 'u', credential: 'c' },
+                ],
+            },
+        })
+        await signaler.joinRoom('room-disconnected-grace')
+        await signaler.connect()
+        await vi.advanceTimersByTimeAsync(25)
+        expect(FakeRTCPeerConnection.instances.length).toBe(2)
+
+        const stunPc = FakeRTCPeerConnection.instances[1]
+        stunPc.connectionState = 'disconnected'
+        stunPc.emit('connectionstatechange')
+
+        await vi.advanceTimersByTimeAsync(500)
+        expect(FakeRTCPeerConnection.instances.length).toBe(2)
+
+        await vi.advanceTimersByTimeAsync(1_400)
+        expect(FakeRTCPeerConnection.instances.length).toBe(3)
+        expect(FakeRTCPeerConnection.instances[2].config.iceTransportPolicy).toBe('all')
+    })
+
     it('publishes bootstrap offer when negotiationneeded is not fired', async () => {
         vi.useFakeTimers()
         vi.stubGlobal(
@@ -273,7 +384,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         expect(reconnectHard).toHaveBeenCalledTimes(1)
     })
 
-    it('limits STUN connecting watchdog hard reconnect attempts', async () => {
+    it('limits TURN-enabled connecting watchdog hard reconnect attempts', async () => {
         vi.useFakeTimers()
         vi.stubGlobal(
             'RTCPeerConnection',
@@ -282,6 +393,15 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
 
         const signaler = new RTCSignaler('caller', makeDb(), {
             connectionStrategy: 'DEFAULT',
+            rtcConfiguration: {
+                iceServers: [
+                    {
+                        urls: ['turn:turn.example.com:3478'],
+                        username: 'u',
+                        credential: 'c',
+                    },
+                ],
+            },
         })
         await signaler.joinRoom('room-stun-watchdog-limit')
         await signaler.connect()
@@ -338,82 +458,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         expect(onError).toHaveBeenCalledTimes(0)
     })
 
-    it('does not poison remote generation from echoed answer', async () => {
-        vi.stubGlobal(
-            'RTCPeerConnection',
-            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
-        )
-        stubRtcSessionDescription()
-
-        let offerCb:
-            | ((offer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void)
-            | undefined
-        let answerCb:
-            | ((answer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void)
-            | undefined
-        const setAnswer = vi.fn(async () => {})
-        const setRemoteSpy = vi.spyOn(FakeRTCPeerConnection.prototype, 'setRemoteDescription')
-
-        const signaler = new RTCSignaler(
-            'callee',
-            makeDb({
-                setAnswer,
-                subscribeOnOffer: (cb) => {
-                    offerCb = cb as (
-                        offer: RTCSessionDescriptionInit & { pcGeneration?: number },
-                    ) => void
-                    return () => {}
-                },
-                subscribeOnAnswer: (cb) => {
-                    answerCb = cb as (
-                        answer: RTCSessionDescriptionInit & { pcGeneration?: number },
-                    ) => void
-                    return () => {}
-                },
-            }),
-            {
-                connectionStrategy: 'LAN_FIRST',
-                lanFirstTimeoutMs: 60_000,
-            },
-        )
-
-        await signaler.joinRoom('room-generation-echo')
-        await signaler.connect()
-
-        offerCb?.({
-            type: 'offer',
-            sdp: 'v=0\r\no=caller 1 1 IN IP4 0.0.0.0\r\n',
-            pcGeneration: 1,
-        })
-        await Promise.resolve()
-        await Promise.resolve()
-        await Promise.resolve()
-        await Promise.resolve()
-
-        answerCb?.({
-            type: 'answer',
-            sdp: 'v=0\r\no=callee 99 99 IN IP4 0.0.0.0\r\n',
-            pcGeneration: 99,
-        })
-        await Promise.resolve()
-        await Promise.resolve()
-
-        offerCb?.({
-            type: 'offer',
-            sdp: 'v=0\r\no=caller 2 2 IN IP4 0.0.0.0\r\n',
-            pcGeneration: 2,
-        })
-        await Promise.resolve()
-        await Promise.resolve()
-
-        const offerSdps = setRemoteSpy.mock.calls
-            .map(([desc]) => (desc as RTCSessionDescriptionInit | undefined)?.sdp ?? '')
-            .filter((sdp) => sdp.includes('o=caller'))
-        expect(offerSdps).toContain('v=0\r\no=caller 2 2 IN IP4 0.0.0.0\r\n')
-        expect(offerSdps.length).toBeGreaterThanOrEqual(2)
-    })
-
-    it('rebuilds callee peer when remote offer generation is ahead in STUN phase', async () => {
+    it('rebuilds callee peer when remote offer session changes', async () => {
         vi.stubGlobal(
             'RTCPeerConnection',
             FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
@@ -439,23 +484,92 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
             },
         )
 
-        await signaler.joinRoom('room-callee-generation-sync')
+        await signaler.joinRoom('room-callee-session-sync')
         await signaler.connect()
         expect(FakeRTCPeerConnection.instances.length).toBe(1)
 
         offerCb?.({
             type: 'offer',
             sdp: 'v=0\r\no=caller 3 3 IN IP4 0.0.0.0\r\n',
-            pcGeneration: 2,
+            sessionId: 'sess-a',
         })
         await Promise.resolve()
         await Promise.resolve()
         await Promise.resolve()
 
         expect(FakeRTCPeerConnection.instances.length).toBe(2)
+        offerCb?.({
+            type: 'offer',
+            sdp: 'v=0\r\no=caller 4 4 IN IP4 0.0.0.0\r\n',
+            sessionId: 'sess-b',
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+        expect(FakeRTCPeerConnection.instances.length).toBe(3)
     })
 
-    it('caller ignores stale answers by forPcGeneration marker', async () => {
+    it('ignores stale offers from previously seen sessions', async () => {
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+        stubRtcSessionDescription()
+
+        let offerCb:
+            | ((offer: RTCSessionDescriptionInit & { sessionId?: string }) => void)
+            | undefined
+
+        const signaler = new RTCSignaler(
+            'callee',
+            makeDb({
+                subscribeOnOffer: (cb) => {
+                    offerCb = cb as (
+                        offer: RTCSessionDescriptionInit & { sessionId?: string },
+                    ) => void
+                    return () => {}
+                },
+            }),
+            {
+                connectionStrategy: 'DEFAULT',
+            },
+        )
+
+        await signaler.joinRoom('room-stale-session-ignore')
+        await signaler.connect()
+        expect(FakeRTCPeerConnection.instances.length).toBe(1)
+
+        offerCb?.({
+            type: 'offer',
+            sdp: 'v=0\r\no=caller 1 1 IN IP4 0.0.0.0\r\n',
+            sessionId: 'sess-a',
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+        expect(FakeRTCPeerConnection.instances.length).toBe(2)
+
+        offerCb?.({
+            type: 'offer',
+            sdp: 'v=0\r\no=caller 2 2 IN IP4 0.0.0.0\r\n',
+            sessionId: 'sess-b',
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+        expect(FakeRTCPeerConnection.instances.length).toBe(3)
+
+        offerCb?.({
+            type: 'offer',
+            sdp: 'v=0\r\no=caller stale 9 9 IN IP4 0.0.0.0\r\n',
+            sessionId: 'sess-a',
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+        expect(FakeRTCPeerConnection.instances.length).toBe(3)
+    })
+
+    it('caller ignores stale answers by sessionId marker', async () => {
         vi.useFakeTimers()
         vi.stubGlobal(
             'RTCPeerConnection',
@@ -466,8 +580,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         let answerCb:
             | ((
                   answer: RTCSessionDescriptionInit & {
-                      pcGeneration?: number
-                      forPcGeneration?: number
+                      sessionId?: string
                   },
               ) => void)
             | undefined
@@ -479,8 +592,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
                 subscribeOnAnswer: (cb) => {
                     answerCb = cb as (
                         answer: RTCSessionDescriptionInit & {
-                            pcGeneration?: number
-                            forPcGeneration?: number
+                            sessionId?: string
                         },
                     ) => void
                     return () => {}
@@ -496,12 +608,12 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         await signaler.connect()
         await vi.advanceTimersByTimeAsync(25)
         const baselineCalls = setRemoteSpy.mock.calls.length
+        const currentSessionId = (signaler as any).sessionId as string
 
         answerCb?.({
             type: 'answer',
             sdp: 'v=0\r\no=callee stale 1 1 IN IP4 0.0.0.0\r\n',
-            pcGeneration: 1,
-            forPcGeneration: 1,
+            sessionId: 'stale-session',
         })
         await vi.advanceTimersByTimeAsync(1)
         expect(setRemoteSpy.mock.calls.length).toBe(baselineCalls)
@@ -509,8 +621,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         answerCb?.({
             type: 'answer',
             sdp: 'v=0\r\no=callee fresh 2 2 IN IP4 0.0.0.0\r\n',
-            pcGeneration: 2,
-            forPcGeneration: 2,
+            sessionId: currentSessionId,
         })
         await vi.advanceTimersByTimeAsync(1)
         expect(setRemoteSpy.mock.calls.length).toBe(baselineCalls + 1)

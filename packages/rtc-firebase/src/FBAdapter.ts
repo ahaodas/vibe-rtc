@@ -1,6 +1,6 @@
 // FBAdapter.ts
 
-import type { AnswerSDP, CandidateDoc, OfferSDP, RoomDoc, SignalDB } from '@vibe-rtc/rtc-core'
+import type { AnswerSDP, CandidateDoc, IcePhase, OfferSDP, RoomDoc, SignalDB } from '@vibe-rtc/rtc-core'
 import type { Auth } from 'firebase/auth'
 import {
     type CollectionReference,
@@ -31,10 +31,23 @@ const sanitize = <T extends Record<string, any>>(o: T): T =>
 
 type IceCandidateInput =
     | RTCIceCandidate
-    | (RTCIceCandidateInit & { epoch?: number; pcGeneration?: number })
+    | (RTCIceCandidateInit & {
+          epoch?: number
+          sessionId?: string
+          pcGeneration?: number
+          gen?: number
+          icePhase?: IcePhase | 'TURN_ONLY'
+      })
+
+const toIcePhase = (value: unknown): IcePhase | undefined => {
+    if (value === 'LAN' || value === 'STUN' || value === 'STUN_ONLY' || value === 'TURN_ENABLED') return value
+    // Backward compatibility for already-persisted signaling payloads.
+    if (value === 'TURN_ONLY') return 'TURN_ENABLED'
+    return undefined
+}
 
 const candidateDocId = (ice: RTCIceCandidateInit): string => {
-    const raw = `${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
+    const raw = `${(ice as any).sessionId ?? ''}|${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
     let h = 2166136261
     for (let i = 0; i < raw.length; i++) {
         h ^= raw.charCodeAt(i)
@@ -45,18 +58,43 @@ const candidateDocId = (ice: RTCIceCandidateInit): string => {
 
 const normalizeIceCandidate = (
     ice: IceCandidateInput,
-): RTCIceCandidateInit & { epoch?: number; pcGeneration?: number } => {
+): RTCIceCandidateInit & {
+    epoch?: number
+    sessionId?: string
+    pcGeneration?: number
+    gen?: number
+    icePhase?: IcePhase
+} => {
     const withMaybeToJson = ice as RTCIceCandidate & {
         epoch?: number
+        sessionId?: string
         pcGeneration?: number
+        gen?: number
+        icePhase?: IcePhase | 'TURN_ONLY'
         toJSON?: () => RTCIceCandidateInit
     }
     const base = typeof withMaybeToJson.toJSON === 'function' ? withMaybeToJson.toJSON() : ice
-    return sanitize(base as RTCIceCandidateInit & { epoch?: number; pcGeneration?: number })
+    const normalized = base as RTCIceCandidateInit & {
+        epoch?: number
+        sessionId?: string
+        pcGeneration?: number
+        gen?: number
+        icePhase?: IcePhase | 'TURN_ONLY'
+    }
+    const safe = { ...normalized, icePhase: toIcePhase(normalized.icePhase) }
+    return sanitize(safe)
 }
 
-const candidateSignalKey = (ice: RTCIceCandidateInit & { epoch?: number; pcGeneration?: number }) =>
-    `${ice.epoch ?? -1}|${ice.pcGeneration ?? -1}|${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
+const candidateSignalKey = (
+    ice: RTCIceCandidateInit & {
+        epoch?: number
+        sessionId?: string
+        pcGeneration?: number
+        gen?: number
+        icePhase?: string
+    },
+) =>
+    `${ice.epoch ?? -1}|${ice.sessionId ?? 'n/a'}|${ice.icePhase ?? 'n/a'}|${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
 
 export class FBAdapter implements SignalDB {
     private roomRef?: DocumentReference<RoomDoc>
@@ -369,7 +407,7 @@ export class FBAdapter implements SignalDB {
 
     // ------------- ICE -------------
 
-    async addCallerIceCandidate(ice: RTCIceCandidate): Promise<void> {
+    async addCallerIceCandidate(ice: RTCIceCandidate | CandidateDoc): Promise<void> {
         if (!this.callerCol) throw new Error('Room not selected')
         const json = normalizeIceCandidate(ice as IceCandidateInput)
         const ref = doc(this.callerCol, candidateDocId(json))
@@ -385,7 +423,7 @@ export class FBAdapter implements SignalDB {
         )
     }
 
-    async addCalleeIceCandidate(ice: RTCIceCandidate): Promise<void> {
+    async addCalleeIceCandidate(ice: RTCIceCandidate | CandidateDoc): Promise<void> {
         if (!this.calleeCol) throw new Error('Room not selected')
         const json = normalizeIceCandidate(ice as IceCandidateInput)
         const ref = doc(this.calleeCol, candidateDocId(json))

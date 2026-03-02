@@ -1,10 +1,24 @@
-export type OfferSDP = { type: 'offer'; sdp: string; epoch?: number; pcGeneration?: number }
+import type { IcePhase } from './connection-strategy'
+
+export type OfferSDP = {
+    type: 'offer'
+    sdp: string
+    epoch?: number
+    sessionId?: string
+    pcGeneration?: number
+    gen?: number
+    icePhase?: IcePhase
+}
 export type AnswerSDP = {
     type: 'answer'
     sdp: string
     epoch?: number
+    sessionId?: string
     pcGeneration?: number
     forPcGeneration?: number
+    gen?: number
+    forGen?: number
+    icePhase?: IcePhase
 }
 
 export type RoomDoc = {
@@ -23,7 +37,10 @@ export type RoomDoc = {
 
 export type CandidateDoc = RTCIceCandidateInit & {
     epoch?: number
+    sessionId?: string
     pcGeneration?: number
+    gen?: number
+    icePhase?: IcePhase
     createdAt?: unknown // serverTimestamp()
 }
 
@@ -46,8 +63,8 @@ export interface SignalDB {
     clearAnswer(): Promise<void>
 
     /** ICE */
-    addCallerIceCandidate(ice: RTCIceCandidate): Promise<void>
-    addCalleeIceCandidate(ice: RTCIceCandidate): Promise<void>
+    addCallerIceCandidate(ice: RTCIceCandidate | CandidateDoc): Promise<void>
+    addCalleeIceCandidate(ice: RTCIceCandidate | CandidateDoc): Promise<void>
     subscribeOnCallerIceCandidate(cb: (ice: RTCIceCandidateInit) => void): () => void
     subscribeOnCalleeIceCandidate(cb: (ice: RTCIceCandidateInit) => void): () => void
 

@@ -12,7 +12,18 @@ import {
     shouldSendCandidate,
 } from './connection-strategy'
 import { RTCError, RTCErrorCode, type RTCErrorPhase, toRTCError } from './errors'
-import { DEFAULT_ICE_SERVERS, withDefaultIceServers } from './ice-config'
+import {
+    DEFAULT_ICE_SERVERS,
+    extractStunOnlyIceServers,
+    extractTurnOnlyIceServers,
+} from './ice-config'
+import {
+    createInitialNetRttSnapshot,
+    createNetRttService,
+    type NetRttService,
+    type NetRttSnapshot,
+} from './metrics/netRtt'
+import { createPingService, type PingService, type PingSnapshot } from './protocol/ping'
 import { createSignalStreams } from './signal-rx'
 import type { AnswerSDP, OfferSDP, SignalDB } from './types'
 
@@ -28,6 +39,45 @@ const sdpHash = (s?: string | null) => {
     let x = 0
     for (let i = 0; i < line1.length; i++) x = (x * 33) ^ line1.charCodeAt(i)
     return `${line1} #${(x >>> 0).toString(16)}`
+}
+
+const flattenIceUrls = (iceServers: RTCIceServer[]): string[] => {
+    const urls: string[] = []
+    for (const server of iceServers) {
+        const raw = server.urls
+        if (typeof raw === 'string') {
+            urls.push(raw)
+            continue
+        }
+        if (Array.isArray(raw)) {
+            for (const url of raw) {
+                if (typeof url === 'string') urls.push(url)
+            }
+        }
+    }
+    return urls
+}
+
+const summarizeIceServers = (
+    iceServers: RTCIceServer[],
+): {
+    stunCount: number
+    turnCount: number
+    urlsSample: string[]
+} => {
+    const urls = flattenIceUrls(iceServers)
+    let stunCount = 0
+    let turnCount = 0
+    for (const url of urls) {
+        const lower = url.toLowerCase()
+        if (lower.startsWith('stun:') || lower.startsWith('stuns:')) stunCount += 1
+        if (lower.startsWith('turn:') || lower.startsWith('turns:')) turnCount += 1
+    }
+    return {
+        stunCount,
+        turnCount,
+        urlsSample: urls.slice(0, 3),
+    }
 }
 
 function mkDbg(ctx: {
@@ -57,8 +107,20 @@ function mkDbg(ctx: {
 
 const sleep = (ms: number) => new Promise((res) => setTimeout(res, ms))
 const CONNECTING_WATCHDOG_MS_LAN = 6500
-const CONNECTING_WATCHDOG_MS_STUN = 30_000
+const CONNECTING_WATCHDOG_MS_PUBLIC = 30_000
 const MAX_STUN_WATCHDOG_RECONNECTS = 2
+const DEFAULT_STUN_ONLY_TIMEOUT_MS = 10_000
+const STUN_ONLY_CHECKING_GRACE_MS = 1800
+const STUN_ONLY_PROGRESS_WINDOW_MS = 2000
+const STUN_ONLY_PROGRESS_EXTENSION_MS = 2000
+
+const createSessionId = (): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID()
+    }
+    const rand = Math.random().toString(16).slice(2, 10)
+    return `sess-${Date.now().toString(16)}-${rand}`
+}
 
 type Unsub = () => void
 export type Role = 'caller' | 'callee'
@@ -75,6 +137,10 @@ export interface RTCSignalerOptions {
     waitReadyTimeoutMs?: number
     connectionStrategy?: ConnectionStrategy
     lanFirstTimeoutMs?: number
+    stunOnlyTimeoutMs?: number
+    pingIntervalMs?: number
+    pingWindowSize?: number
+    netRttIntervalMs?: number
     stunServers?: RTCIceServer[]
     onMessage?: (text: string, meta: { reliable: boolean }) => void
     onConnectionStateChange?: (state: RTCPeerConnectionState) => void
@@ -113,6 +179,7 @@ export interface DebugState {
     connectionStrategy: ConnectionStrategy
     icePhase: IcePhase
     pcGeneration: number
+    sessionId: string | null
     candidateStats: {
         localSeen: Record<CandidateType, number>
         localSent: Record<CandidateType, number>
@@ -122,6 +189,8 @@ export interface DebugState {
         remoteDropped: Record<CandidateType, number>
     }
     selectedPath?: CandidateType
+    ping: PingSnapshot
+    netRtt: NetRttSnapshot
     lastEvent?: string
     lastError?: string
 }
@@ -139,7 +208,8 @@ export class RTCSignaler {
     private connectedOrSubbed = false
 
     private readonly baseRtcConfig: RTCConfiguration
-    private readonly defaultStunServers: RTCIceServer[]
+    private readonly stunOnlyIceServers: RTCIceServer[]
+    private readonly turnOnlyIceServers: RTCIceServer[]
     private readonly fastLabel: string
     private readonly reliableLabel: string
     private readonly fastInit: RTCDataChannelInit
@@ -188,16 +258,25 @@ export class RTCSignaler {
     private phase: Phase = 'idle'
     private lastErrorText: string | undefined
     private signalingEpoch = 0
-    private remotePcGeneration: number | undefined
+    private sessionId: string | null = null
+    private loggedStaleSessionKeys = new Set<string>()
+    private seenRemoteOfferSessions = new Set<string>()
     private readonly connectionStrategy: ConnectionStrategy
     private readonly lanFirstTimeoutMs: number
+    private readonly stunOnlyTimeoutMs: number
+    private readonly netRttIntervalMs: number
     private icePhase: IcePhase
     private lanFirstTimer?: number
+    private stunOnlyTimer?: number
     private dcRecoveryTimer?: number
     private dcRecoveryGeneration?: number
     private pcGeneration = 0
     private controlledPeerRebuild = false
     private selectedPath: CandidateType | undefined
+    private readonly pingService: PingService
+    private netRttService?: NetRttService
+    private remoteProgressSeq = 0
+    private remoteProgressLastAt = 0
     private candidateStats = {
         localSeen: this.makeCandidateCountMap(),
         localSent: this.makeCandidateCountMap(),
@@ -232,14 +311,17 @@ export class RTCSignaler {
         this.polite = role === 'callee'
         this.connectionStrategy = opts.connectionStrategy ?? 'LAN_FIRST'
         this.lanFirstTimeoutMs = opts.lanFirstTimeoutMs ?? 1800
-        this.icePhase = this.connectionStrategy === 'LAN_FIRST' ? 'LAN' : 'STUN'
+        this.stunOnlyTimeoutMs = opts.stunOnlyTimeoutMs ?? DEFAULT_STUN_ONLY_TIMEOUT_MS
+        this.netRttIntervalMs = opts.netRttIntervalMs ?? 1000
         this.baseRtcConfig = opts.rtcConfiguration ? { ...opts.rtcConfiguration } : {}
-        this.defaultStunServers =
-            opts.stunServers && opts.stunServers.length > 0
-                ? opts.stunServers.map((server) => ({ ...server }))
-                : this.baseRtcConfig.iceServers && this.baseRtcConfig.iceServers.length > 0
-                  ? this.baseRtcConfig.iceServers.map((server) => ({ ...server }))
-                  : DEFAULT_ICE_SERVERS.map((server) => ({ ...server }))
+        const configuredIceServers = this.baseRtcConfig.iceServers ?? []
+        const fallbackIceServers =
+            opts.stunServers && opts.stunServers.length > 0 ? opts.stunServers : DEFAULT_ICE_SERVERS
+        const effectiveIceServers =
+            configuredIceServers.length > 0 ? configuredIceServers : fallbackIceServers
+        this.stunOnlyIceServers = extractStunOnlyIceServers(effectiveIceServers)
+        this.turnOnlyIceServers = extractTurnOnlyIceServers(effectiveIceServers)
+        this.icePhase = this.resolveInitialIcePhase()
 
         this.fastLabel = opts.fastLabel ?? 'fast'
         this.reliableLabel = opts.reliableLabel ?? 'reliable'
@@ -266,6 +348,23 @@ export class RTCSignaler {
             this.emitDebug('error')
         }
         this.onDebug = opts.onDebug ?? (() => {})
+        this.pingService = createPingService({
+            send: (message) => {
+                if (this.dcReliable?.readyState === 'open') {
+                    this.dcReliable.send(message)
+                    return
+                }
+                if (this.dcFast?.readyState === 'open') {
+                    this.dcFast.send(message)
+                }
+            },
+            isOpen: () => this.isAnyDataChannelsOpen(),
+            intervalMs: opts.pingIntervalMs,
+            windowSize: opts.pingWindowSize,
+            onUpdate: () => {
+                this.emitDebug()
+            },
+        })
 
         this.streams = createSignalStreams(this.signalDb)
     }
@@ -359,8 +458,16 @@ export class RTCSignaler {
         }
         this.connectedOrSubbed = true
         this.selectedPath = undefined
-        this.remotePcGeneration = undefined
+        this.sessionId = null
+        this.loggedStaleSessionKeys.clear()
+        this.seenRemoteOfferSessions.clear()
         this.stunWatchdogReconnects = 0
+        this.remoteProgressSeq = 0
+        this.remoteProgressLastAt = 0
+        this.pingService.stop()
+        this.pingService.reset()
+        this.netRttService?.stop()
+        this.netRttService?.reset()
         this.candidateStats = {
             localSeen: this.makeCandidateCountMap(),
             localSent: this.makeCandidateCountMap(),
@@ -369,7 +476,9 @@ export class RTCSignaler {
             remoteAccepted: this.makeCandidateCountMap(),
             remoteDropped: this.makeCandidateCountMap(),
         }
-        this.icePhase = this.connectionStrategy === 'LAN_FIRST' ? 'LAN' : 'STUN'
+        this.clearLanFirstTimer()
+        this.clearStunOnlyTimer()
+        this.icePhase = this.resolveInitialIcePhase()
 
         this.initPeer()
         this.emitDebug('initPeer')
@@ -380,21 +489,12 @@ export class RTCSignaler {
         this.rxSubs.push(
             remoteIce$.subscribe(async (c) => {
                 if (!this.acceptEpoch((c as any).epoch)) return
-                const remoteGeneration =
-                    typeof (c as any).pcGeneration === 'number'
-                        ? (c as any).pcGeneration
-                        : undefined
-                if (
-                    typeof remoteGeneration === 'number' &&
-                    typeof this.remotePcGeneration === 'number' &&
-                    remoteGeneration < this.remotePcGeneration
-                ) {
-                    this.dbg.p(
-                        `remote ICE dropped stale generation=${remoteGeneration} currentRemote=${this.remotePcGeneration}`,
-                    )
-                    this.emitDebug('ice-remote-drop:stale-generation')
-                    return
-                }
+                const syncedSession = this.syncPeerToRemoteSession(
+                    this.getSignalSessionId(c),
+                    (c as any).icePhase,
+                    'candidate',
+                )
+                if (syncedSession == null) return
                 const candidateText = c.candidate || ''
                 const candidateType = getCandidateType(candidateText)
                 this.bumpCandidateCounter(this.candidateStats.remoteSeen, candidateType)
@@ -404,8 +504,10 @@ export class RTCSignaler {
                     this.icePhase === 'LAN' &&
                     candidateType !== 'host'
                 ) {
-                    this.dbg.p(`LAN received non-host ICE (${candidateType}) -> fallback to STUN`)
-                    this.transitionToStun('remote-candidate')
+                    this.dbg.p(
+                        `LAN received non-host ICE (${candidateType}) -> fallback to public ICE`,
+                    )
+                    this.transitionToNextIcePhase('remote-candidate')
                 }
                 if (!shouldAcceptCandidate(this.icePhase, candidateText)) {
                     this.bumpCandidateCounter(this.candidateStats.remoteDropped, candidateType)
@@ -414,6 +516,7 @@ export class RTCSignaler {
                     return
                 }
                 this.bumpCandidateCounter(this.candidateStats.remoteAccepted, candidateType)
+                this.markRemoteProgress()
                 this.dbg.p(`remote ICE from ${this.role === 'caller' ? 'callee' : 'caller'}`, {
                     buffered: !this.remoteDescSet,
                     phase: this.icePhase,
@@ -446,7 +549,23 @@ export class RTCSignaler {
         this.rxSubs.push(
             this.streams.offer$.subscribe(async (offer) => {
                 if (!this.acceptEpoch((offer as any).epoch)) return
-                let localGeneration = this.pcGeneration
+                const remoteSessionId = this.getSignalSessionId(offer)
+                if (
+                    remoteSessionId &&
+                    remoteSessionId !== this.sessionId &&
+                    this.seenRemoteOfferSessions.has(remoteSessionId)
+                ) {
+                    this.logStaleSessionOnce('offer', remoteSessionId)
+                    return
+                }
+                const localSessionId = this.syncPeerToRemoteSession(
+                    remoteSessionId,
+                    (offer as any).icePhase,
+                    'offer',
+                )
+                if (localSessionId == null) return
+                if (remoteSessionId) this.seenRemoteOfferSessions.add(remoteSessionId)
+                const localGeneration = this.pcGeneration
                 const desc = new RTCSessionDescription(offer)
                 const sdp = desc.sdp ?? null
                 this.dbg.p('onOffer()', {
@@ -481,25 +600,6 @@ export class RTCSignaler {
                         this.dbg.p('skip offer (same sdp handled)')
                         return
                     }
-
-                    const remoteGeneration =
-                        typeof (offer as any).pcGeneration === 'number'
-                            ? (offer as any).pcGeneration
-                            : undefined
-                    this.maybeSyncCalleeToRemoteOfferGeneration(remoteGeneration)
-                    localGeneration = this.pcGeneration
-                    if (
-                        typeof remoteGeneration === 'number' &&
-                        typeof this.remotePcGeneration === 'number' &&
-                        remoteGeneration < this.remotePcGeneration
-                    ) {
-                        this.dbg.p(
-                            `skip offer: stale remote generation=${remoteGeneration} current=${this.remotePcGeneration}`,
-                        )
-                        return
-                    }
-                    if (typeof remoteGeneration === 'number')
-                        this.remotePcGeneration = remoteGeneration
 
                     const collision =
                         this.makingOffer || (this.pc && this.pc.signalingState !== 'stable')
@@ -566,6 +666,7 @@ export class RTCSignaler {
                     this.dbg.p('SLD(answer) start')
                     if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     await this.pc.setLocalDescription(answer)
+                    if (this.icePhase === 'STUN_ONLY') this.startStunOnlyTimer(localGeneration)
                     this.dbg.p('SLD(answer) done, publish')
                     const epochChanged = await this.refreshSignalingEpoch()
                     if (epochChanged) {
@@ -577,8 +678,9 @@ export class RTCSignaler {
                         ...(answer as AnswerSDP),
                         epoch: this.signalingEpoch,
                         pcGeneration: localGeneration,
-                        forPcGeneration:
-                            typeof remoteGeneration === 'number' ? remoteGeneration : undefined,
+                        gen: localGeneration,
+                        sessionId: this.sessionId ?? undefined,
+                        icePhase: this.icePhase,
                     } as AnswerSDP)
                     this.dbg.p('answer published')
                 } catch (e) {
@@ -602,7 +704,6 @@ export class RTCSignaler {
         this.rxSubs.push(
             this.streams.answer$.subscribe(async (answer) => {
                 if (!this.acceptEpoch((answer as any).epoch)) return
-                const localGeneration = this.pcGeneration
                 const desc = new RTCSessionDescription(answer)
                 const sdp = desc.sdp ?? null
                 this.dbg.p('onAnswer()', {
@@ -636,36 +737,13 @@ export class RTCSignaler {
                         )
                         return
                     }
-                    const forPcGeneration =
-                        typeof (answer as any).forPcGeneration === 'number'
-                            ? (answer as any).forPcGeneration
-                            : undefined
-                    if (
-                        typeof forPcGeneration === 'number' &&
-                        forPcGeneration !== localGeneration
-                    ) {
-                        this.dbg.p(
-                            `skip answer: forPcGeneration=${forPcGeneration} current=${localGeneration}`,
-                        )
-                        this.emitDebug('answer-drop:forPcGeneration-mismatch')
-                        return
-                    }
-                    const remoteGeneration =
-                        typeof (answer as any).pcGeneration === 'number'
-                            ? (answer as any).pcGeneration
-                            : undefined
-                    if (
-                        typeof remoteGeneration === 'number' &&
-                        typeof this.remotePcGeneration === 'number' &&
-                        remoteGeneration < this.remotePcGeneration
-                    ) {
-                        this.dbg.p(
-                            `skip answer: stale remote generation=${remoteGeneration} current=${this.remotePcGeneration}`,
-                        )
-                        return
-                    }
-                    if (typeof remoteGeneration === 'number')
-                        this.remotePcGeneration = remoteGeneration
+                    const localSessionId = this.syncPeerToRemoteSession(
+                        this.getSignalSessionId(answer),
+                        (answer as any).icePhase,
+                        'answer',
+                    )
+                    if (localSessionId == null) return
+                    const localGeneration = this.pcGeneration
 
                     this.dbg.p('SRD(answer) start')
                     if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
@@ -678,6 +756,7 @@ export class RTCSignaler {
                     if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     this.lastHandledAnswerSdp = sdp
                     this.remoteDescSet = true
+                    this.markRemoteProgress()
                     this.dbg.p('SRD(answer) done, drain ICE', { pending: this.pendingIce.length })
                     this.emitDebug('SRD(answer) done')
 
@@ -759,6 +838,7 @@ export class RTCSignaler {
             this.lastLocalOfferSdp = offer.sdp ?? null
             this.dbg.p('SLD(offer,iceRestart) start', { sdp: sdpHash(offer.sdp) })
             await this.pc.setLocalDescription(offer)
+            if (this.icePhase === 'STUN_ONLY') this.startStunOnlyTimer(this.pcGeneration)
             const epochChanged = await this.refreshSignalingEpoch()
             if (epochChanged) {
                 this.dbg.p('skip offer(iceRestart) publish after epoch sync')
@@ -768,6 +848,9 @@ export class RTCSignaler {
                 ...(offer as OfferSDP),
                 epoch: this.signalingEpoch,
                 pcGeneration: this.pcGeneration,
+                gen: this.pcGeneration,
+                sessionId: this.sessionId ?? undefined,
+                icePhase: this.icePhase,
             } as OfferSDP)
             this.dbg.p('offer(iceRestart) published')
         } catch (e) {
@@ -815,6 +898,8 @@ export class RTCSignaler {
         this.emitDebug('hangup')
         this.clearRecoveryTimers()
         this.clearLanFirstTimer()
+        this.pingService.stop()
+        this.netRttService?.stop()
 
         // Rx subscriptions
         for (const s of this.rxSubs.splice(0)) {
@@ -911,6 +996,107 @@ export class RTCSignaler {
     // Internals
     // ————————————————————————————————————————————————————————————————
 
+    private hasIcePhase(phase: IcePhase): boolean {
+        if (phase === 'LAN') return true
+        if (phase === 'STUN' || phase === 'STUN_ONLY') return this.stunOnlyIceServers.length > 0
+        return this.turnOnlyIceServers.length > 0
+    }
+
+    private resolveInitialIcePhase(): IcePhase {
+        if (this.connectionStrategy === 'LAN_FIRST') return 'LAN'
+        if (this.hasIcePhase('STUN_ONLY')) return 'STUN_ONLY'
+        if (this.hasIcePhase('TURN_ENABLED')) return 'TURN_ENABLED'
+        return 'STUN_ONLY'
+    }
+
+    private getNextIcePhase(from: IcePhase): IcePhase | undefined {
+        if (from === 'LAN') {
+            if (this.hasIcePhase('STUN_ONLY')) return 'STUN_ONLY'
+            if (this.hasIcePhase('TURN_ENABLED')) return 'TURN_ENABLED'
+            return undefined
+        }
+        if (from === 'STUN' || from === 'STUN_ONLY') {
+            if (this.hasIcePhase('TURN_ENABLED')) return 'TURN_ENABLED'
+            return undefined
+        }
+        return undefined
+    }
+
+    private normalizeSignalIcePhase(value: unknown): IcePhase | undefined {
+        if (value === 'TURN_ONLY') return 'TURN_ENABLED'
+        if (value === 'LAN' || value === 'STUN' || value === 'STUN_ONLY' || value === 'TURN_ENABLED') {
+            return value
+        }
+        return undefined
+    }
+
+    private getSignalSessionId(signal: unknown): string | undefined {
+        const raw = (signal as any)?.sessionId
+        if (typeof raw !== 'string') return undefined
+        const value = raw.trim()
+        return value.length > 0 ? value : undefined
+    }
+
+    private logStaleSessionOnce(
+        source: 'offer' | 'answer' | 'candidate',
+        remoteSessionId: string | undefined,
+    ) {
+        const key = `${source}:${remoteSessionId ?? 'missing'}:${this.sessionId ?? 'none'}`
+        if (this.loggedStaleSessionKeys.has(key)) return
+        this.loggedStaleSessionKeys.add(key)
+        this.dbg.p(`ignore-stale-session:${source}`, {
+            currentSessionId: this.sessionId ?? null,
+            remoteSessionId: remoteSessionId ?? null,
+        })
+        this.emitDebug('ignore-stale-session')
+    }
+
+    private markRemoteProgress() {
+        this.remoteProgressSeq += 1
+        this.remoteProgressLastAt = Date.now()
+    }
+
+    private syncPeerToRemoteSession(
+        remoteSessionId: string | undefined,
+        remotePhaseRaw: unknown,
+        source: 'offer' | 'answer' | 'candidate',
+    ): string | undefined {
+        if (!remoteSessionId) return this.sessionId ?? undefined
+        if (remoteSessionId === this.sessionId) return remoteSessionId
+        if (source !== 'offer') {
+            this.logStaleSessionOnce(source, remoteSessionId)
+            return undefined
+        }
+        const remotePhase = this.normalizeSignalIcePhase(remotePhaseRaw)
+        const targetPhase =
+            remotePhase && this.hasIcePhase(remotePhase)
+                ? remotePhase
+                : this.icePhase
+        this.dbg.p(`sync-remote-session:${source}`, {
+            remoteSessionId,
+            currentSessionId: this.sessionId ?? null,
+            remotePhase: remotePhase ?? 'n/a',
+            targetPhase,
+        })
+        this.controlledPeerRebuild = true
+        try {
+            this.makingOffer = false
+            this.answering = false
+            this.resetNegotiationStateForPeerRebuild()
+            this.clearLanFirstTimer()
+            this.clearStunOnlyTimer()
+            this.clearConnectingWatchdogTimer()
+            this.connectingWatchdogGeneration = undefined
+            this.cleanupPeerOnly()
+            this.icePhase = targetPhase
+            this.initPeer(remoteSessionId)
+        } finally {
+            this.controlledPeerRebuild = false
+        }
+        this.emitDebug(`sync-remote:${source}`)
+        return this.sessionId ?? undefined
+    }
+
     private buildRtcConfigForPhase(phase: IcePhase): RTCConfiguration {
         if (phase === 'LAN') {
             return {
@@ -918,7 +1104,18 @@ export class RTCSignaler {
                 iceServers: [],
             }
         }
-        return withDefaultIceServers(this.baseRtcConfig, this.defaultStunServers)
+        if (phase === 'TURN_ENABLED') {
+            return {
+                ...this.baseRtcConfig,
+                iceServers: this.turnOnlyIceServers.map((server) => ({ ...server })),
+                iceTransportPolicy: this.baseRtcConfig.iceTransportPolicy ?? 'all',
+            }
+        }
+        return {
+            ...this.baseRtcConfig,
+            iceServers: this.stunOnlyIceServers.map((server) => ({ ...server })),
+            iceTransportPolicy: 'all',
+        }
     }
 
     private isCurrentGeneration(generation: number): boolean {
@@ -935,6 +1132,53 @@ export class RTCSignaler {
 
     private areDataChannelsOpen(): boolean {
         return this.dcFast?.readyState === 'open' && this.dcReliable?.readyState === 'open'
+    }
+
+    private isAnyDataChannelsOpen(): boolean {
+        return this.dcFast?.readyState === 'open' || this.dcReliable?.readyState === 'open'
+    }
+
+    private syncPingLifecycle() {
+        if (this.phase === 'closing' || this.phase === 'idle' || !this.roomId) {
+            this.pingService.pause()
+            return
+        }
+        if (this.isAnyDataChannelsOpen()) {
+            this.pingService.start()
+            return
+        }
+        this.pingService.pause()
+    }
+
+    private syncNetRttLifecycle() {
+        const netRtt = this.netRttService
+        if (!netRtt || !this.pc) return
+        if (this.phase === 'closing' || this.phase === 'idle' || !this.roomId) {
+            netRtt.pause()
+            return
+        }
+
+        const conn = this.pc.connectionState
+        const ice = this.pc.iceConnectionState
+        const connected = conn === 'connected' || ice === 'connected' || ice === 'completed'
+        if (connected) {
+            netRtt.start()
+            return
+        }
+
+        const closedOrFailed =
+            conn === 'disconnected' ||
+            conn === 'failed' ||
+            conn === 'closed' ||
+            ice === 'disconnected' ||
+            ice === 'failed' ||
+            ice === 'closed'
+        if (closedOrFailed) {
+            netRtt.stop()
+            return
+        }
+
+        netRtt.pause()
     }
 
     private clearDcRecoveryTimer() {
@@ -962,7 +1206,7 @@ export class RTCSignaler {
         this.connectingWatchdogGeneration = generation
         this.clearConnectingWatchdogTimer()
         const watchdogTimeoutMs =
-            this.icePhase === 'STUN' ? CONNECTING_WATCHDOG_MS_STUN : CONNECTING_WATCHDOG_MS_LAN
+            this.icePhase === 'LAN' ? CONNECTING_WATCHDOG_MS_LAN : CONNECTING_WATCHDOG_MS_PUBLIC
         this.connectingWatchdogTimer = setTimeout(() => {
             void (async () => {
                 this.connectingWatchdogTimer = undefined
@@ -971,12 +1215,12 @@ export class RTCSignaler {
                 if (!this.isCurrentGeneration(generation)) return
                 if (this.isConnectedState() || this.areDataChannelsOpen()) return
                 if (
-                    this.icePhase === 'STUN' &&
+                    this.icePhase === 'TURN_ENABLED' &&
                     this.stunWatchdogReconnects >= MAX_STUN_WATCHDOG_RECONNECTS
                 ) {
                     return
                 }
-                if (this.icePhase === 'STUN') this.stunWatchdogReconnects += 1
+                if (this.icePhase === 'TURN_ENABLED') this.stunWatchdogReconnects += 1
                 this.dbg.p(`connecting watchdog -> reconnectHard (${reason})`)
                 this.emitDebug('connecting-watchdog:hard-reconnect')
                 try {
@@ -1035,15 +1279,21 @@ export class RTCSignaler {
         this.lastLocalOfferSdp = null
         this.answering = false
         this.remoteDescSet = false
-        this.remotePcGeneration = undefined
         this.pendingIce.length = 0
     }
 
-    private transitionToStun(reason: 'timeout' | 'remote-offer-generation' | 'remote-candidate') {
-        if (this.icePhase === 'STUN') return
-        this.dbg.p(`LAN -> STUN transition (${reason})`)
-        this.emitDebug(`phase-transition:LAN->STUN:${reason}`)
-        this.icePhase = 'STUN'
+    private transitionToIcePhase(nextPhase: IcePhase, reason: string): boolean {
+        if (this.icePhase === nextPhase) return false
+        if (!this.hasIcePhase(nextPhase)) return false
+        if (nextPhase === 'TURN_ENABLED' && this.turnOnlyIceServers.length === 0) {
+            this.dbg.p('skip TURN_ENABLED transition: no TURN servers in config')
+            this.emitDebug('turn-enabled-skip:no-turn-servers')
+            return false
+        }
+        const prevPhase = this.icePhase
+        this.dbg.p(`${prevPhase} -> ${nextPhase} transition (${reason})`)
+        this.emitDebug(`phase-transition:${prevPhase}->${nextPhase}:${reason}`)
+        this.icePhase = nextPhase
         this.stunWatchdogReconnects = 0
         this.controlledPeerRebuild = true
         try {
@@ -1051,6 +1301,7 @@ export class RTCSignaler {
             this.answering = false
             this.resetNegotiationStateForPeerRebuild()
             this.clearLanFirstTimer()
+            this.clearStunOnlyTimer()
             this.clearConnectingWatchdogTimer()
             this.connectingWatchdogGeneration = undefined
             this.cleanupPeerOnly()
@@ -1058,31 +1309,20 @@ export class RTCSignaler {
         } finally {
             this.controlledPeerRebuild = false
         }
-        this.emitDebug('phase=STUN')
+        this.emitDebug(`phase=${nextPhase}`)
+        return true
     }
 
-    private maybeSyncCalleeToRemoteOfferGeneration(remoteGeneration: number | undefined) {
-        if (this.role !== 'callee') return
-        if (typeof remoteGeneration !== 'number') return
-        if (remoteGeneration <= this.pcGeneration) return
-        if (this.connectionStrategy === 'LAN_FIRST' && this.icePhase === 'LAN') {
-            this.transitionToStun('remote-offer-generation')
-            return
+    private transitionToNextIcePhase(reason: string): boolean {
+        const nextPhase = this.getNextIcePhase(this.icePhase)
+        if (!nextPhase) {
+            if (this.icePhase === 'STUN_ONLY') {
+                this.dbg.p('stay on STUN_ONLY: next phase unavailable (no-turn-servers)')
+                this.emitDebug('turn-enabled-skip:no-turn-servers')
+            }
+            return false
         }
-
-        this.controlledPeerRebuild = true
-        try {
-            this.makingOffer = false
-            this.answering = false
-            this.resetNegotiationStateForPeerRebuild()
-            this.clearLanFirstTimer()
-            this.clearConnectingWatchdogTimer()
-            this.connectingWatchdogGeneration = undefined
-            this.cleanupPeerOnly()
-            this.initPeer()
-        } finally {
-            this.controlledPeerRebuild = false
-        }
+        return this.transitionToIcePhase(nextPhase, reason)
     }
 
     private async publishOfferIfStable(
@@ -1106,6 +1346,7 @@ export class RTCSignaler {
             this.dbg.p('created offer', { sdp: sdpHash(offer.sdp) })
             this.dbg.p('SLD(offer) start')
             await this.pc.setLocalDescription(offer)
+            if (this.icePhase === 'STUN_ONLY') this.startStunOnlyTimer(generation)
             if (!this.isCurrentGeneration(generation) || !this.pc) return
             const epochChanged = await this.refreshSignalingEpoch()
             if (epochChanged) {
@@ -1117,6 +1358,9 @@ export class RTCSignaler {
                 ...(offer as OfferSDP),
                 epoch: this.signalingEpoch,
                 pcGeneration: generation,
+                gen: generation,
+                sessionId: this.sessionId ?? undefined,
+                icePhase: this.icePhase,
             } as OfferSDP)
             this.dbg.p(source === 'bootstrap' ? 'offer published (bootstrap)' : 'offer published')
         } catch (e) {
@@ -1149,8 +1393,8 @@ export class RTCSignaler {
             if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle')
                 return
             if (this.icePhase !== 'LAN' || this.isConnectedState()) return
-            this.dbg.p(`LAN timeout -> fallback to STUN in ${this.lanFirstTimeoutMs}ms`)
-            this.transitionToStun('timeout')
+            this.dbg.p(`LAN timeout -> fallback in ${this.lanFirstTimeoutMs}ms`)
+            this.transitionToNextIcePhase('timeout')
         }, this.lanFirstTimeoutMs) as unknown as number
         this.emitDebug('phase=LAN')
     }
@@ -1159,6 +1403,64 @@ export class RTCSignaler {
         if (!this.lanFirstTimer) return
         clearTimeout(this.lanFirstTimer as unknown as number)
         this.lanFirstTimer = undefined
+    }
+
+    private startStunOnlyTimer(
+        generation: number,
+        delayMs: number = this.stunOnlyTimeoutMs,
+        allowCheckingGrace = true,
+        allowProgressExtension = true,
+    ) {
+        if (this.connectionStrategy !== 'LAN_FIRST') return
+        if (this.icePhase !== 'STUN_ONLY') return
+        if (!this.hasIcePhase('TURN_ENABLED')) return
+        const baselineProgressSeq = this.remoteProgressSeq
+        this.clearStunOnlyTimer()
+        this.stunOnlyTimer = setTimeout(() => {
+            if (!this.isCurrentGeneration(generation)) return
+            if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle')
+                return
+            if (this.icePhase !== 'STUN_ONLY' || this.isConnectedState()) return
+            if (this.pc.connectionState === 'connected' || this.pc.iceConnectionState === 'connected')
+                return
+            const nowMs = Date.now()
+            const remoteProgress =
+                this.remoteProgressSeq > baselineProgressSeq &&
+                nowMs - this.remoteProgressLastAt <= STUN_ONLY_PROGRESS_WINDOW_MS
+            if (allowProgressExtension && remoteProgress) {
+                this.dbg.p('STUN-only timeout postponed: signaling/ICE progress observed')
+                this.startStunOnlyTimer(
+                    generation,
+                    STUN_ONLY_PROGRESS_EXTENSION_MS,
+                    true,
+                    false,
+                )
+                return
+            }
+            if (allowCheckingGrace && this.pc.iceConnectionState === 'checking') {
+                this.dbg.p('STUN-only timeout grace: ICE is checking')
+                this.startStunOnlyTimer(
+                    generation,
+                    STUN_ONLY_CHECKING_GRACE_MS,
+                    false,
+                    allowProgressExtension,
+                )
+                return
+            }
+            if (!this.hasIcePhase('TURN_ENABLED')) {
+                this.dbg.p('STUN-only timeout: TURN phase skipped (no-turn-servers)')
+                this.emitDebug('turn-enabled-skip:no-turn-servers')
+                return
+            }
+            this.dbg.p(`STUN-only timeout -> TURN_ENABLED (delay=${delayMs}ms)`)
+            this.transitionToNextIcePhase('stun-timeout')
+        }, delayMs) as unknown as number
+    }
+
+    private clearStunOnlyTimer() {
+        if (!this.stunOnlyTimer) return
+        clearTimeout(this.stunOnlyTimer as unknown as number)
+        this.stunOnlyTimer = undefined
     }
 
     private makeCandidateCountMap(): Record<CandidateType, number> {
@@ -1175,6 +1477,12 @@ export class RTCSignaler {
             this.selectedPath = 'host'
             this.dbg.p('selected path inferred host (LAN phase)')
             this.emitDebug('selected-path:host')
+            return
+        }
+        if (this.icePhase === 'TURN_ENABLED') {
+            this.selectedPath = 'relay'
+            this.dbg.p('selected path inferred relay (TURN_ENABLED phase)')
+            this.emitDebug('selected-path:relay')
             return
         }
         if (
@@ -1199,17 +1507,34 @@ export class RTCSignaler {
         this.emitDebug(`selected-path:${this.selectedPath}`)
     }
 
-    private initPeer() {
+    private initPeer(nextSessionId?: string) {
         this.dbg.p('initPeer()')
         this.clearDcRecoveryTimer()
         this.dcRecoveryGeneration = undefined
         this.clearConnectingWatchdogTimer()
         this.connectingWatchdogGeneration = undefined
+        this.netRttService?.stop()
+        this.netRttService = undefined
         const generation = ++this.pcGeneration
+        this.sessionId = nextSessionId ?? createSessionId()
         const rtcConfig = this.buildRtcConfigForPhase(this.icePhase)
+        const iceSummary = summarizeIceServers(rtcConfig.iceServers ?? [])
         this.pc = new RTCPeerConnection(rtcConfig)
-        this.dbg.p(`pc created generation=${generation} phase=${this.icePhase}`, {
-            iceServers: rtcConfig.iceServers ?? [],
+        this.netRttService = createNetRttService({
+            peerConnection: this.pc,
+            intervalMs: this.netRttIntervalMs,
+            onUpdate: () => {
+                this.emitDebug()
+            },
+        })
+        this.dbg.p('pc-config', {
+            gen: generation,
+            sessionId: this.sessionId,
+            phase: this.icePhase,
+            iceTransportPolicy: rtcConfig.iceTransportPolicy ?? 'all',
+            stunCount: iceSummary.stunCount,
+            turnCount: iceSummary.turnCount,
+            urlsSample: iceSummary.urlsSample,
         })
 
         this.remoteDescSet = false
@@ -1217,6 +1542,7 @@ export class RTCSignaler {
         this.emitDebug('pc-created')
         if (this.icePhase === 'LAN') this.startLanFirstTimer(generation)
         else this.clearLanFirstTimer()
+        this.clearStunOnlyTimer()
 
         this.pc.addEventListener('signalingstatechange', () => {
             if (!this.isCurrentGeneration(generation)) return
@@ -1228,6 +1554,7 @@ export class RTCSignaler {
             this.dbg.p(`ice=${this.pc?.iceConnectionState}`)
             const s = this.pc?.iceConnectionState
             this.emitDebug(`ice=${s}`)
+            this.syncNetRttLifecycle()
             if (!this.roomId) return
             if (s === 'connected') {
                 this.phase = 'connected'
@@ -1238,6 +1565,7 @@ export class RTCSignaler {
                 this.stunWatchdogReconnects = 0
                 this.clearRecoveryTimers()
                 this.clearLanFirstTimer()
+                this.clearStunOnlyTimer()
                 this.captureSelectedPath()
                 this.scheduleCallerDcRecovery(generation, 'ice=connected')
                 this.clearConnectingWatchdogTimer()
@@ -1246,6 +1574,7 @@ export class RTCSignaler {
             }
             if (s === 'completed') {
                 this.clearLanFirstTimer()
+                this.clearStunOnlyTimer()
                 this.captureSelectedPath()
                 this.scheduleCallerDcRecovery(generation, 'ice=completed')
                 this.clearConnectingWatchdogTimer()
@@ -1253,6 +1582,26 @@ export class RTCSignaler {
                 this.emitDebug('ice=completed')
             }
             if (s === 'checking') this.scheduleCallerConnectingWatchdog(generation, 'ice=checking')
+            if (
+                this.connectionStrategy === 'LAN_FIRST' &&
+                this.role === 'caller' &&
+                this.icePhase === 'STUN_ONLY' &&
+                s === 'failed'
+            ) {
+                const transitioned = this.transitionToNextIcePhase(`stun-${s}`)
+                if (transitioned) return
+            }
+            if (
+                this.connectionStrategy === 'LAN_FIRST' &&
+                this.role === 'caller' &&
+                this.icePhase === 'STUN_ONLY' &&
+                s === 'disconnected' &&
+                this.hasIcePhase('TURN_ENABLED')
+            ) {
+                this.dbg.p('STUN-only disconnected: wait before TURN_ENABLED transition')
+                this.startStunOnlyTimer(generation, STUN_ONLY_CHECKING_GRACE_MS, true)
+                return
+            }
             if (this.controlledPeerRebuild) return
             if (this.role === 'caller' && s === 'disconnected') this.scheduleSoftThenMaybeHard()
             if (this.role === 'caller' && (s === 'failed' || s === 'closed')) this.tryHardNow()
@@ -1263,6 +1612,7 @@ export class RTCSignaler {
             this.dbg.p('connection=' + st)
             this.onConnectionStateChange(st)
             this.emitDebug('connection=' + st)
+            this.syncNetRttLifecycle()
             if (!this.roomId) return
             if (st === 'connected') {
                 this.phase = 'connected'
@@ -1273,6 +1623,7 @@ export class RTCSignaler {
                 this.stunWatchdogReconnects = 0
                 this.clearRecoveryTimers()
                 this.clearLanFirstTimer()
+                this.clearStunOnlyTimer()
                 this.captureSelectedPath()
                 this.scheduleCallerDcRecovery(generation, 'connection=connected')
                 this.clearConnectingWatchdogTimer()
@@ -1281,6 +1632,26 @@ export class RTCSignaler {
             }
             if (st === 'connecting')
                 this.scheduleCallerConnectingWatchdog(generation, 'connection=connecting')
+            if (
+                this.connectionStrategy === 'LAN_FIRST' &&
+                this.role === 'caller' &&
+                this.icePhase === 'STUN_ONLY' &&
+                st === 'failed'
+            ) {
+                const transitioned = this.transitionToNextIcePhase(`stun-${st}`)
+                if (transitioned) return
+            }
+            if (
+                this.connectionStrategy === 'LAN_FIRST' &&
+                this.role === 'caller' &&
+                this.icePhase === 'STUN_ONLY' &&
+                st === 'disconnected' &&
+                this.hasIcePhase('TURN_ENABLED')
+            ) {
+                this.dbg.p('STUN-only disconnected(connection): wait before TURN_ENABLED transition')
+                this.startStunOnlyTimer(generation, STUN_ONLY_CHECKING_GRACE_MS, true)
+                return
+            }
             if (this.controlledPeerRebuild) return
             if (this.role === 'caller' && st === 'disconnected') this.scheduleSoftThenMaybeHard()
             if (this.role === 'caller' && (st === 'failed' || st === 'closed')) this.tryHardNow()
@@ -1303,6 +1674,7 @@ export class RTCSignaler {
                     this.resolveChannelWaiters(ch, rel)
                     if (rel) this.flushQueue(ch, this.reliableQueue)
                     else this.flushQueue(ch, this.fastQueue)
+                    this.syncNetRttLifecycle()
                     this.emitDebug('dc-early-open')
                 }
             }
@@ -1322,13 +1694,22 @@ export class RTCSignaler {
             }
             this.bumpCandidateCounter(this.candidateStats.localSent, candidateType)
             try {
-                // Include local pcGeneration so remote side can safely ignore stale ICE
-                // after peer rebuilds within the same signaling epoch.
+                // Include session marker so remote side can ignore stale ICE
+                // after reload/reconnect. Generation is kept only for debug.
                 const candidatePayload = {
                     ...ev.candidate.toJSON(),
                     epoch: this.signalingEpoch,
                     pcGeneration: generation,
-                } as RTCIceCandidateInit & { epoch: number; pcGeneration: number }
+                    gen: generation,
+                    sessionId: this.sessionId ?? undefined,
+                    icePhase: this.icePhase,
+                } as RTCIceCandidateInit & {
+                    epoch: number
+                    pcGeneration: number
+                    gen: number
+                    sessionId?: string
+                    icePhase: IcePhase
+                }
                 if (this.role === 'caller')
                     await this.streams.addCallerIceCandidate(candidatePayload as any)
                 else await this.streams.addCalleeIceCandidate(candidatePayload as any)
@@ -1376,6 +1757,8 @@ export class RTCSignaler {
                 this.clearDcRecoveryTimer()
                 this.dcRecoveryGeneration = undefined
             }
+            this.syncPingLifecycle()
+            this.syncNetRttLifecycle()
             this.emitDebug(`dc-open:${ch.label}`)
         }
         ch.onclose = () => {
@@ -1403,10 +1786,13 @@ export class RTCSignaler {
             }
             if (reliable) this.onReliableClose()
             else this.onFastClose()
+            this.syncPingLifecycle()
+            this.syncNetRttLifecycle()
             this.emitDebug(`dc-close:${ch.label}`)
         }
         ch.onmessage = (ev) => {
             const text = typeof ev.data === 'string' ? ev.data : String(ev.data)
+            if (this.pingService.handleIncoming(text)) return
             this.onMessage(text, { reliable })
         }
     }
@@ -1498,10 +1884,14 @@ export class RTCSignaler {
     private cleanupPeerOnly() {
         this.dbg.p('cleanupPeerOnly')
         this.clearLanFirstTimer()
+        this.clearStunOnlyTimer()
         this.clearDcRecoveryTimer()
         this.dcRecoveryGeneration = undefined
         this.clearConnectingWatchdogTimer()
         this.connectingWatchdogGeneration = undefined
+        this.pingService.pause()
+        this.netRttService?.stop()
+        this.netRttService = undefined
         try {
             this.dcFast?.close()
         } catch {}
@@ -1609,7 +1999,6 @@ export class RTCSignaler {
             this.lastLocalOfferSdp = null
             this.answering = false
             this.remoteDescSet = false
-            this.remotePcGeneration = undefined
             this.pendingIce.length = 0
             if (this.pc) {
                 this.cleanupPeerOnly()
@@ -1678,8 +2067,13 @@ export class RTCSignaler {
             connectionStrategy: this.connectionStrategy,
             icePhase: this.icePhase,
             pcGeneration: this.pcGeneration,
+            sessionId: this.sessionId,
             candidateStats: this.candidateStats,
             selectedPath: this.selectedPath,
+            ping: this.pingService.getSnapshot(),
+            netRtt: this.netRttService
+                ? this.netRttService.getSnapshot()
+                : createInitialNetRttSnapshot(),
             lastEvent,
             lastError: this.lastErrorText,
         }
