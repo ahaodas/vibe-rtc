@@ -54,6 +54,7 @@ export function App() {
     const [joinModalOpen, setJoinModalOpen] = useState(false)
     const [joinRoomIdInput, setJoinRoomIdInput] = useState('')
     const [roomNotFoundModalOpen, setRoomNotFoundModalOpen] = useState(false)
+    const [takeoverModalOpen, setTakeoverModalOpen] = useState(false)
     const [createProgressRatio, setCreateProgressRatio] = useState(0)
     const [createProgressTrackWidthPx, setCreateProgressTrackWidthPx] = useState(0)
     const [connectProgressRatio, setConnectProgressRatio] = useState(0)
@@ -121,6 +122,9 @@ export function App() {
     const isRoomNotFoundError =
         rtc.lastError?.code === 'ROOM_NOT_FOUND' ||
         /room not found|no such document/i.test(rtc.lastError?.message ?? '')
+    const isTakeoverError =
+        rtc.lastError?.code === 'TAKEOVER_DETECTED' ||
+        /taken over in another tab/i.test(rtc.lastError?.message ?? '')
     const orderedLog = useMemo(
         () =>
             rtc.operationLog
@@ -190,12 +194,22 @@ export function App() {
     }, [isRoomNotFoundError])
 
     useEffect(() => {
+        if (mode === 'initial') return
+        if (!isTakeoverError) return
+        setTakeoverModalOpen(true)
+    }, [mode, isTakeoverError])
+
+    useEffect(() => {
+        if (isTakeoverError || takeoverModalOpen) {
+            setQrModalOpen(false)
+            return
+        }
         if (mode === 'caller' && routeRoomId && !channelReadyForMessages) {
             setQrModalOpen(true)
             return
         }
         setQrModalOpen(false)
-    }, [mode, routeRoomId, channelReadyForMessages])
+    }, [mode, routeRoomId, channelReadyForMessages, isTakeoverError, takeoverModalOpen])
 
     useEffect(() => {
         return () => {
@@ -318,6 +332,7 @@ export function App() {
             setMessageText('')
             setQrModalOpen(false)
             setLeaveConfirmOpen(false)
+            setTakeoverModalOpen(false)
             setLeavePending(false)
             setRemoveRoomOnLeave(true)
             setNetWarning(null)
@@ -464,6 +479,7 @@ export function App() {
 
     const backToMain = () => {
         setRoomNotFoundModalOpen(false)
+        setTakeoverModalOpen(false)
         setJoinModalOpen(false)
         setJoinRoomIdInput('')
         autoRouteHandledRef.current = null
@@ -497,6 +513,25 @@ export function App() {
                             onClick={() => setRoomNotFoundModalOpen(false)}
                         >
                             Close
+                        </button>
+                    </menu>
+                </section>
+            </div>
+        ) : null
+
+    const takeoverDetectedModal =
+        mode !== 'initial' && takeoverModalOpen && isTakeoverError ? (
+            <div className="qrModalBackdrop" role="dialog" aria-modal="true">
+                <section className="appModal appModalError leaveModal">
+                    <div className="qrModalHeader">
+                        <h2 className="qrModalTitle">Session taken over</h2>
+                    </div>
+                    <p className="appModalMessage">
+                        This room slot was taken over in another tab. This page is now inactive.
+                    </p>
+                    <menu className="leaveModalActions">
+                        <button type="button" className="cs-btn" onClick={backToMain}>
+                            OK
                         </button>
                     </menu>
                 </section>
@@ -636,6 +671,7 @@ export function App() {
     return (
         <main className="demoShell demoShellChat">
             {roomNotFoundModal}
+            {takeoverDetectedModal}
             {leaveConfirmOpen && (
                 <div className="qrModalBackdrop" role="dialog" aria-modal="true">
                     <section className="appModal leaveModal">
@@ -686,7 +722,12 @@ export function App() {
                     </section>
                 </div>
             )}
-            {mode === 'caller' && !channelReadyForMessages && qrModalOpen && calleeUrl && (
+            {mode === 'caller' &&
+                !isTakeoverError &&
+                !takeoverModalOpen &&
+                !channelReadyForMessages &&
+                qrModalOpen &&
+                calleeUrl && (
                 <div className="qrModalBackdrop" role="dialog" aria-modal="true">
                     <section className="qrModal">
                         <div className="qrModalHeader">
@@ -773,7 +814,11 @@ export function App() {
                                 readOnly
                                 value={routeRoomId}
                             />
-                            {mode === 'caller' && !channelReadyForMessages && calleeUrl && (
+                            {mode === 'caller' &&
+                                !isTakeoverError &&
+                                !takeoverModalOpen &&
+                                !channelReadyForMessages &&
+                                calleeUrl && (
                                 <button
                                     type="button"
                                     className="cs-btn roomQrBtn"
