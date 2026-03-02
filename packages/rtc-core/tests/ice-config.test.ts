@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_ICE_SERVERS, parseIceServers, withDefaultIceServers } from '../src/ice-config'
+import {
+    DEFAULT_ICE_SERVERS,
+    extractStunOnlyIceServers,
+    extractTurnOnlyIceServers,
+    parseIceServers,
+    withDefaultIceServers,
+} from '../src/ice-config'
 
 describe('ICE config utils', () => {
     it('returns undefined for empty input', () => {
@@ -49,5 +55,39 @@ describe('ICE config utils', () => {
     it('fills defaults when explicit iceServers is empty', () => {
         const cfg = withDefaultIceServers({ iceServers: [] })
         expect(cfg.iceServers).toEqual(DEFAULT_ICE_SERVERS)
+    })
+
+    it('extracts STUN-only urls from mixed servers (string urls)', () => {
+        const result = extractStunOnlyIceServers([
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'turn:turn.example.com:3478', username: 'u', credential: 'c' },
+        ])
+        expect(result).toEqual([{ urls: 'stun:stun.l.google.com:19302' }])
+    })
+
+    it('extracts TURN-only urls from mixed servers (array urls)', () => {
+        const result = extractTurnOnlyIceServers([
+            {
+                urls: [
+                    'stun:stun.l.google.com:19302',
+                    'turn:turn.example.com:3478',
+                    'turns:turn.example.com:5349?transport=tcp',
+                ],
+                username: 'u',
+                credential: 'c',
+            },
+        ])
+        expect(result).toEqual([
+            {
+                urls: ['turn:turn.example.com:3478', 'turns:turn.example.com:5349?transport=tcp'],
+                username: 'u',
+                credential: 'c',
+            },
+        ])
+    })
+
+    it('returns empty arrays when target scheme is absent', () => {
+        expect(extractStunOnlyIceServers([{ urls: 'turn:turn.example.com:3478' }])).toEqual([])
+        expect(extractTurnOnlyIceServers([{ urls: 'stun:stun.l.google.com:19302' }])).toEqual([])
     })
 })

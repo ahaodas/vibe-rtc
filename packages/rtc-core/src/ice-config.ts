@@ -14,6 +14,40 @@ function cloneIceServers(servers: RTCIceServer[]): RTCIceServer[] {
     return servers.map(cloneIceServer)
 }
 
+const isStunUrl = (url: string): boolean => /^stuns?:/i.test(url)
+const isTurnUrl = (url: string): boolean => /^turns?:/i.test(url)
+
+function filterIceServersByUrls(
+    servers: RTCIceServer[],
+    predicate: (url: string) => boolean,
+): RTCIceServer[] {
+    const out: RTCIceServer[] = []
+    for (const server of servers) {
+        const urls = Array.isArray(server.urls) ? server.urls : [server.urls]
+        const filtered = urls.filter(
+            (url): url is string => typeof url === 'string' && predicate(url),
+        )
+        if (!filtered.length) continue
+        out.push({
+            ...server,
+            urls: Array.isArray(server.urls) ? filtered : filtered[0],
+        })
+    }
+    return out
+}
+
+export function extractStunOnlyIceServers(iceServers: RTCIceServer[]): RTCIceServer[] {
+    return filterIceServersByUrls(cloneIceServers(iceServers), isStunUrl)
+}
+
+export function extractTurnOnlyIceServers(iceServers: RTCIceServer[]): RTCIceServer[] {
+    return filterIceServersByUrls(cloneIceServers(iceServers), isTurnUrl)
+}
+
+// Backward-compatible aliases.
+export const extractStunOnly = extractStunOnlyIceServers
+export const extractTurnOnly = extractTurnOnlyIceServers
+
 function parseCsvUrls(raw: string): string[] {
     return raw
         .split(',')

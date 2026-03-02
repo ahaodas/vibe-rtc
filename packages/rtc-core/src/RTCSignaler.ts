@@ -1024,7 +1024,12 @@ export class RTCSignaler {
 
     private normalizeSignalIcePhase(value: unknown): IcePhase | undefined {
         if (value === 'TURN_ONLY') return 'TURN_ENABLED'
-        if (value === 'LAN' || value === 'STUN' || value === 'STUN_ONLY' || value === 'TURN_ENABLED') {
+        if (
+            value === 'LAN' ||
+            value === 'STUN' ||
+            value === 'STUN_ONLY' ||
+            value === 'TURN_ENABLED'
+        ) {
             return value
         }
         return undefined
@@ -1069,9 +1074,7 @@ export class RTCSignaler {
         }
         const remotePhase = this.normalizeSignalIcePhase(remotePhaseRaw)
         const targetPhase =
-            remotePhase && this.hasIcePhase(remotePhase)
-                ? remotePhase
-                : this.icePhase
+            remotePhase && this.hasIcePhase(remotePhase) ? remotePhase : this.icePhase
         this.dbg.p(`sync-remote-session:${source}`, {
             remoteSessionId,
             currentSessionId: this.sessionId ?? null,
@@ -1421,7 +1424,10 @@ export class RTCSignaler {
             if (!this.roomId || !this.pc || this.phase === 'closing' || this.phase === 'idle')
                 return
             if (this.icePhase !== 'STUN_ONLY' || this.isConnectedState()) return
-            if (this.pc.connectionState === 'connected' || this.pc.iceConnectionState === 'connected')
+            if (
+                this.pc.connectionState === 'connected' ||
+                this.pc.iceConnectionState === 'connected'
+            )
                 return
             const nowMs = Date.now()
             const remoteProgress =
@@ -1429,12 +1435,7 @@ export class RTCSignaler {
                 nowMs - this.remoteProgressLastAt <= STUN_ONLY_PROGRESS_WINDOW_MS
             if (allowProgressExtension && remoteProgress) {
                 this.dbg.p('STUN-only timeout postponed: signaling/ICE progress observed')
-                this.startStunOnlyTimer(
-                    generation,
-                    STUN_ONLY_PROGRESS_EXTENSION_MS,
-                    true,
-                    false,
-                )
+                this.startStunOnlyTimer(generation, STUN_ONLY_PROGRESS_EXTENSION_MS, true, false)
                 return
             }
             if (allowCheckingGrace && this.pc.iceConnectionState === 'checking') {
@@ -1648,7 +1649,9 @@ export class RTCSignaler {
                 st === 'disconnected' &&
                 this.hasIcePhase('TURN_ENABLED')
             ) {
-                this.dbg.p('STUN-only disconnected(connection): wait before TURN_ENABLED transition')
+                this.dbg.p(
+                    'STUN-only disconnected(connection): wait before TURN_ENABLED transition',
+                )
                 this.startStunOnlyTimer(generation, STUN_ONLY_CHECKING_GRACE_MS, true)
                 return
             }

@@ -1,6 +1,13 @@
 // FBAdapter.ts
 
-import type { AnswerSDP, CandidateDoc, IcePhase, OfferSDP, RoomDoc, SignalDB } from '@vibe-rtc/rtc-core'
+import type {
+    AnswerSDP,
+    CandidateDoc,
+    IcePhase,
+    OfferSDP,
+    RoomDoc,
+    SignalDB,
+} from '@vibe-rtc/rtc-core'
 import type { Auth } from 'firebase/auth'
 import {
     type CollectionReference,
@@ -40,7 +47,8 @@ type IceCandidateInput =
       })
 
 const toIcePhase = (value: unknown): IcePhase | undefined => {
-    if (value === 'LAN' || value === 'STUN' || value === 'STUN_ONLY' || value === 'TURN_ENABLED') return value
+    if (value === 'LAN' || value === 'STUN' || value === 'STUN_ONLY' || value === 'TURN_ENABLED')
+        return value
     // Backward compatibility for already-persisted signaling payloads.
     if (value === 'TURN_ONLY') return 'TURN_ENABLED'
     return undefined

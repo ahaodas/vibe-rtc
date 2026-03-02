@@ -1,5 +1,5 @@
 export type ConnectionStrategy = 'LAN_FIRST' | 'DEFAULT'
-export type IcePhase = 'LAN' | 'STUN'
+export type IcePhase = 'LAN' | 'STUN' | 'STUN_ONLY' | 'TURN_ENABLED'
 export type CandidateType = 'host' | 'srflx' | 'relay' | 'unknown'
 
 export function getCandidateType(candidateStr?: string | null): CandidateType {
