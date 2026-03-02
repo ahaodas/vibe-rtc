@@ -19,27 +19,10 @@ const defaultStunUrls = [
     'stun:stun1.l.google.com:19302',
     'stun:stun2.l.google.com:19302',
     'stun:stun3.l.google.com:19302',
-    // 'free.expressturn.com:3478'
 ]
 
-const envTurnUrls = import.meta.env.VITE_TURN_URLS?.trim()
-const turnUrls = envTurnUrls
-    ? envTurnUrls
-          .split(',')
-          .map((u: string) => u.trim())
-          .filter(Boolean)
-    : defaultTurnUrls
-const envStunUrls = import.meta.env.VITE_STUN_URLS?.trim()
-const stunUrls = envStunUrls
-    ? envStunUrls
-          .split(',')
-          .map((u: string) => u.trim())
-          .filter(Boolean)
-    : defaultStunUrls
-
-const turnUsername = import.meta.env.VITE_TURN_USERNAME ?? import.meta.env.VITE_METERED_USER
-const turnCredential =
-    import.meta.env.VITE_TURN_CREDENTIAL ?? import.meta.env.VITE_METERED_CREDENTIAL
+const turnUsername = import.meta.env.VITE_METERED_USER
+const turnCredential = import.meta.env.VITE_METERED_CREDENTIAL
 
 const searchParams = new URLSearchParams(window.location.search)
 const forceConsoleDebug = searchParams.get('debugConsole') === '1'
@@ -50,7 +33,7 @@ const FORCE_TURN_ONLY = forceTurnOnlyByQuery || forceTurnOnlyByEnv
 const turnServer =
     turnUsername && turnCredential
         ? ({
-              urls: turnUrls,
+              urls: defaultTurnUrls,
               username: turnUsername,
               credential: turnCredential,
           } satisfies RTCIceServer)
@@ -63,7 +46,7 @@ const rtcIceServers: RTCIceServer[] = FORCE_TURN_ONLY
         : []
     : [
           {
-              urls: stunUrls,
+              urls: defaultStunUrls,
           },
           ...(turnServer ? [turnServer] : []),
       ]
