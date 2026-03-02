@@ -25,7 +25,7 @@ import {
 } from './metrics/netRtt'
 import { createPingService, type PingService, type PingSnapshot } from './protocol/ping'
 import { createSignalStreams } from './signal-rx'
-import type { AnswerSDP, OfferSDP, SignalDB } from './types'
+import type { AnswerSDP, OfferSDP, RoomDoc, SignalDB } from './types'
 
 let __seq = 0
 const now = () =>
@@ -180,6 +180,7 @@ export interface DebugState {
     icePhase: IcePhase
     pcGeneration: number
     sessionId: string | null
+    participantId: string | null
     candidateStats: {
         localSeen: Record<CandidateType, number>
         localSent: Record<CandidateType, number>
@@ -259,6 +260,7 @@ export class RTCSignaler {
     private lastErrorText: string | undefined
     private signalingEpoch = 0
     private sessionId: string | null = null
+    private participantId: string | null = null
     private loggedStaleSessionKeys = new Set<string>()
     private seenRemoteOfferSessions = new Set<string>()
     private readonly connectionStrategy: ConnectionStrategy
@@ -277,6 +279,10 @@ export class RTCSignaler {
     private netRttService?: NetRttService
     private remoteProgressSeq = 0
     private remoteProgressLastAt = 0
+    private takeoverStopping = false
+    private ownSlotActive = true
+    private ownSlotCheckAt = 0
+    private ownSlotCheckInFlight?: Promise<boolean>
     private candidateStats = {
         localSeen: this.makeCandidateCountMap(),
         localSent: this.makeCandidateCountMap(),
@@ -367,6 +373,10 @@ export class RTCSignaler {
         })
 
         this.streams = createSignalStreams(this.signalDb)
+        const participantId = (
+            this.signalDb as SignalDB & { getParticipantId?: () => string | null }
+        ).getParticipantId?.()
+        if (participantId) this.participantId = participantId
     }
 
     // ————————————————————————————————————————————————————————————————
@@ -375,6 +385,8 @@ export class RTCSignaler {
 
     async createRoom(): Promise<string> {
         let id: string
+        this.dbg.p('join-start', { role: this.role, mode: 'create' })
+        this.emitDebug('join-start')
         try {
             id = await this.signalDb.createRoom()
         } catch (e) {
@@ -384,6 +396,7 @@ export class RTCSignaler {
         try {
             const room = await this.signalDb.getRoom()
             this.signalingEpoch = room?.epoch ?? 0
+            this.syncIdentityFromRoom(room)
         } catch (e) {
             this.onError(
                 this.raiseError(
@@ -396,14 +409,27 @@ export class RTCSignaler {
                 ),
             )
         }
-        this.dbg.p('createRoom -> ' + id)
+        this.dbg.p('join-success', {
+            role: this.role,
+            participantId: this.participantId,
+            sessionId: this.sessionId,
+            roomId: id,
+        })
+        this.emitDebug('join-success')
+        this.dbg.p(`createRoom -> ${id}`)
         this.emitDebug('createRoom')
         return id
     }
 
     async joinRoom(id: string): Promise<void> {
         this.roomId = id
-        this.dbg.p('joinRoom -> ' + id)
+        this.dbg.p('join-start', {
+            role: this.role,
+            participantId: this.participantId,
+            roomId: id,
+        })
+        this.emitDebug('join-start')
+        this.dbg.p(`joinRoom -> ${id}`)
         try {
             await this.signalDb.joinRoom(id, this.role)
         } catch (e) {
@@ -412,6 +438,7 @@ export class RTCSignaler {
         try {
             const room = await this.signalDb.getRoom()
             this.signalingEpoch = room?.epoch ?? 0
+            this.syncIdentityFromRoom(room)
         } catch (e) {
             this.signalingEpoch = 0
             this.onError(
@@ -425,6 +452,13 @@ export class RTCSignaler {
                 ),
             )
         }
+        this.dbg.p('join-success', {
+            role: this.role,
+            participantId: this.participantId,
+            sessionId: this.sessionId,
+            roomId: id,
+        })
+        this.emitDebug('join-success')
         this.phase = 'subscribed'
         this.emitDebug('joinRoom')
     }
@@ -458,10 +492,13 @@ export class RTCSignaler {
         }
         this.connectedOrSubbed = true
         this.selectedPath = undefined
-        this.sessionId = null
         this.loggedStaleSessionKeys.clear()
         this.seenRemoteOfferSessions.clear()
         this.stunWatchdogReconnects = 0
+        this.takeoverStopping = false
+        this.ownSlotActive = true
+        this.ownSlotCheckAt = 0
+        this.ownSlotCheckInFlight = undefined
         this.remoteProgressSeq = 0
         this.remoteProgressLastAt = 0
         this.pingService.stop()
@@ -489,12 +526,25 @@ export class RTCSignaler {
         this.rxSubs.push(
             remoteIce$.subscribe(async (c) => {
                 if (!this.acceptEpoch((c as any).epoch)) return
+                if (!(await this.ensureOwnSlotActive('recv-candidate'))) return
+                const remoteSessionId = this.getSignalSessionId(c)
+                this.dbg.p('signaling-recv:candidate', {
+                    sessionId: remoteSessionId ?? null,
+                    currentSessionId: this.sessionId ?? null,
+                    phase: this.icePhase,
+                })
                 const syncedSession = this.syncPeerToRemoteSession(
-                    this.getSignalSessionId(c),
+                    remoteSessionId,
                     (c as any).icePhase,
                     'candidate',
                 )
-                if (syncedSession == null) return
+                if (syncedSession == null) {
+                    this.dbg.p('signaling-recv:candidate ignored due to session mismatch', {
+                        sessionId: remoteSessionId ?? null,
+                        currentSessionId: this.sessionId ?? null,
+                    })
+                    return
+                }
                 const candidateText = c.candidate || ''
                 const candidateType = getCandidateType(candidateText)
                 this.bumpCandidateCounter(this.candidateStats.remoteSeen, candidateType)
@@ -549,7 +599,13 @@ export class RTCSignaler {
         this.rxSubs.push(
             this.streams.offer$.subscribe(async (offer) => {
                 if (!this.acceptEpoch((offer as any).epoch)) return
+                if (!(await this.ensureOwnSlotActive('recv-offer'))) return
                 const remoteSessionId = this.getSignalSessionId(offer)
+                this.dbg.p('signaling-recv:offer', {
+                    sessionId: remoteSessionId ?? null,
+                    currentSessionId: this.sessionId ?? null,
+                    phase: this.icePhase,
+                })
                 if (
                     remoteSessionId &&
                     remoteSessionId !== this.sessionId &&
@@ -558,12 +614,30 @@ export class RTCSignaler {
                     this.logStaleSessionOnce('offer', remoteSessionId)
                     return
                 }
+                if (remoteSessionId && remoteSessionId !== this.sessionId) {
+                    const isCurrentRemoteSession =
+                        await this.isCurrentRemoteRoleSession(remoteSessionId)
+                    if (!isCurrentRemoteSession) {
+                        this.logStaleSessionOnce('offer', remoteSessionId)
+                        this.dbg.p('signaling-recv:offer ignored due to session mismatch', {
+                            sessionId: remoteSessionId,
+                            currentSessionId: this.sessionId ?? null,
+                        })
+                        return
+                    }
+                }
                 const localSessionId = this.syncPeerToRemoteSession(
                     remoteSessionId,
                     (offer as any).icePhase,
                     'offer',
                 )
-                if (localSessionId == null) return
+                if (localSessionId == null) {
+                    this.dbg.p('signaling-recv:offer ignored due to session mismatch', {
+                        sessionId: remoteSessionId ?? null,
+                        currentSessionId: this.sessionId ?? null,
+                    })
+                    return
+                }
                 if (remoteSessionId) this.seenRemoteOfferSessions.add(remoteSessionId)
                 const localGeneration = this.pcGeneration
                 const desc = new RTCSessionDescription(offer)
@@ -651,7 +725,7 @@ export class RTCSignaler {
                     }
 
                     if (this.pc?.signalingState !== 'have-remote-offer') {
-                        this.dbg.p('skip answer: state!=' + this.pc?.signalingState)
+                        this.dbg.p(`skip answer: state!=${this.pc?.signalingState}`)
                         return
                     }
                     if (this.answering) {
@@ -674,6 +748,11 @@ export class RTCSignaler {
                         return
                     }
                     if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
+                    this.dbg.p('signaling-send:answer', {
+                        sessionId: this.sessionId ?? null,
+                        generation: localGeneration,
+                        phase: this.icePhase,
+                    })
                     await this.streams.setAnswer({
                         ...(answer as AnswerSDP),
                         epoch: this.signalingEpoch,
@@ -704,6 +783,13 @@ export class RTCSignaler {
         this.rxSubs.push(
             this.streams.answer$.subscribe(async (answer) => {
                 if (!this.acceptEpoch((answer as any).epoch)) return
+                if (!(await this.ensureOwnSlotActive('recv-answer'))) return
+                const remoteSessionId = this.getSignalSessionId(answer)
+                this.dbg.p('signaling-recv:answer', {
+                    sessionId: remoteSessionId ?? null,
+                    currentSessionId: this.sessionId ?? null,
+                    phase: this.icePhase,
+                })
                 const desc = new RTCSessionDescription(answer)
                 const sdp = desc.sdp ?? null
                 this.dbg.p('onAnswer()', {
@@ -738,11 +824,17 @@ export class RTCSignaler {
                         return
                     }
                     const localSessionId = this.syncPeerToRemoteSession(
-                        this.getSignalSessionId(answer),
+                        remoteSessionId,
                         (answer as any).icePhase,
                         'answer',
                     )
-                    if (localSessionId == null) return
+                    if (localSessionId == null) {
+                        this.dbg.p('signaling-recv:answer ignored due to session mismatch', {
+                            sessionId: remoteSessionId ?? null,
+                            currentSessionId: this.sessionId ?? null,
+                        })
+                        return
+                    }
                     const localGeneration = this.pcGeneration
 
                     this.dbg.p('SRD(answer) start')
@@ -818,6 +910,7 @@ export class RTCSignaler {
     }
 
     async reconnectSoft(): Promise<void> {
+        if (!(await this.ensureOwnSlotActive('reconnect-soft'))) return
         if (!this.roomId) {
             throw this.raiseError(
                 new Error('Room not selected'),
@@ -844,6 +937,13 @@ export class RTCSignaler {
                 this.dbg.p('skip offer(iceRestart) publish after epoch sync')
                 return
             }
+            if (!(await this.ensureOwnSlotActive('reconnect-soft:publish'))) return
+            this.dbg.p('signaling-send:offer', {
+                sessionId: this.sessionId ?? null,
+                generation: this.pcGeneration,
+                phase: this.icePhase,
+                source: 'reconnectSoft',
+            })
             await this.streams.setOffer({
                 ...(offer as OfferSDP),
                 epoch: this.signalingEpoch,
@@ -943,6 +1043,10 @@ export class RTCSignaler {
         return this.roomId
     }
 
+    get currentParticipantId() {
+        return this.participantId
+    }
+
     setMessageHandler(cb: (t: string, meta: { reliable: boolean }) => void): Unsub {
         this.onMessage = cb
         return () => {
@@ -1040,6 +1144,42 @@ export class RTCSignaler {
         return undefined
     }
 
+    private getRoleSlotSessionIdFromRoom(
+        room: RoomDoc | null | undefined,
+        role: Role,
+    ): string | null {
+        const slot = role === 'caller' ? room?.slots?.caller : room?.slots?.callee
+        if (!slot || typeof slot.sessionId !== 'string') return null
+        const value = slot.sessionId.trim()
+        return value.length > 0 ? value : null
+    }
+
+    private syncIdentityFromRoom(room: RoomDoc | null | undefined) {
+        const db = this.signalDb as SignalDB & {
+            getParticipantId?: () => string | null
+            getRoleSessionId?: (role: Role) => string | null
+        }
+        const participantId = db.getParticipantId?.()
+        if (participantId) this.participantId = participantId
+        const sessionFromAdapter = db.getRoleSessionId?.(this.role) ?? null
+        const sessionFromRoom = this.getRoleSlotSessionIdFromRoom(room, this.role)
+        const nextSessionId = sessionFromAdapter || sessionFromRoom
+        if (nextSessionId) this.sessionId = nextSessionId
+    }
+
+    private async isCurrentRemoteRoleSession(remoteSessionId: string): Promise<boolean> {
+        try {
+            const room = await this.signalDb.getRoom()
+            if (!room) return true
+            const remoteRole: Role = this.role === 'caller' ? 'callee' : 'caller'
+            const activeRemoteSessionId = this.getRoleSlotSessionIdFromRoom(room, remoteRole)
+            if (!activeRemoteSessionId) return true
+            return activeRemoteSessionId === remoteSessionId
+        } catch {
+            return true
+        }
+    }
+
     private getSignalSessionId(signal: unknown): string | undefined {
         const raw = (signal as any)?.sessionId
         if (typeof raw !== 'string') return undefined
@@ -1059,6 +1199,92 @@ export class RTCSignaler {
             remoteSessionId: remoteSessionId ?? null,
         })
         this.emitDebug('ignore-stale-session')
+    }
+
+    private getRoleSlotFromRoom(
+        room: RoomDoc | null | undefined,
+        role: Role,
+    ):
+        | {
+              participantId: string
+              sessionId: string
+              joinedAt: number
+              lastSeenAt: number
+          }
+        | null
+        | undefined {
+        return role === 'caller' ? room?.slots?.caller : room?.slots?.callee
+    }
+
+    private async handleTakeoverDetected(
+        source: string,
+        slot:
+            | {
+                  participantId: string
+                  sessionId: string
+                  joinedAt: number
+                  lastSeenAt: number
+              }
+            | null
+            | undefined,
+    ) {
+        if (this.takeoverStopping) return
+        this.takeoverStopping = true
+        this.dbg.p('takeover-detected', {
+            role: this.role,
+            source,
+            myParticipantId: this.participantId,
+            mySessionId: this.sessionId,
+            ownerParticipantId: slot?.participantId ?? null,
+            ownerSessionId: slot?.sessionId ?? null,
+        })
+        this.emitDebug('takeover-detected')
+        this.onError(
+            this.raiseError(
+                new Error('Room slot was taken over by another tab'),
+                RTCErrorCode.INVALID_STATE,
+                'lifecycle',
+                false,
+                'takeover detected',
+                false,
+            ),
+        )
+        try {
+            await this.hangup()
+        } catch {}
+    }
+
+    private async ensureOwnSlotActive(source: string): Promise<boolean> {
+        if (this.takeoverStopping) return false
+        if (!this.roomId || !this.participantId) return true
+        const nowMs = Date.now()
+        if (this.ownSlotCheckInFlight) return this.ownSlotCheckInFlight
+        if (nowMs - this.ownSlotCheckAt < 400) return this.ownSlotActive
+
+        this.ownSlotCheckInFlight = (async () => {
+            let active = true
+            try {
+                const room = await this.signalDb.getRoom()
+                const slot = this.getRoleSlotFromRoom(room, this.role)
+                const ownerMismatch =
+                    !!slot?.participantId &&
+                    !!this.participantId &&
+                    slot.participantId !== this.participantId
+                if (ownerMismatch) {
+                    active = false
+                    await this.handleTakeoverDetected(source, slot)
+                }
+            } catch {
+                active = true
+            } finally {
+                this.ownSlotActive = active
+                this.ownSlotCheckAt = Date.now()
+                this.ownSlotCheckInFlight = undefined
+            }
+            return active
+        })()
+
+        return this.ownSlotCheckInFlight
     }
 
     private markRemoteProgress() {
@@ -1337,6 +1563,7 @@ export class RTCSignaler {
         generation: number,
         source: 'onnegotiationneeded' | 'bootstrap',
     ) {
+        if (!(await this.ensureOwnSlotActive(`send-offer:${source}`))) return
         if (!this.isCurrentGeneration(generation)) return
         if (!this.pc) return
         if (this.makingOffer || this.pc.signalingState !== 'stable') {
@@ -1361,7 +1588,14 @@ export class RTCSignaler {
                 this.dbg.p('skip offer publish after epoch sync')
                 return
             }
+            if (!(await this.ensureOwnSlotActive(`send-offer:${source}:publish`))) return
             if (!this.isCurrentGeneration(generation) || !this.pc) return
+            this.dbg.p('signaling-send:offer', {
+                sessionId: this.sessionId ?? null,
+                generation,
+                phase: this.icePhase,
+                source,
+            })
             await this.streams.setOffer({
                 ...(offer as OfferSDP),
                 epoch: this.signalingEpoch,
@@ -1522,7 +1756,7 @@ export class RTCSignaler {
         this.netRttService?.stop()
         this.netRttService = undefined
         const generation = ++this.pcGeneration
-        this.sessionId = nextSessionId ?? createSessionId()
+        this.sessionId = nextSessionId ?? this.sessionId ?? createSessionId()
         const rtcConfig = this.buildRtcConfigForPhase(this.icePhase)
         const iceSummary = summarizeIceServers(rtcConfig.iceServers ?? [])
         this.pc = new RTCPeerConnection(rtcConfig)
@@ -1615,9 +1849,9 @@ export class RTCSignaler {
         this.pc.addEventListener('connectionstatechange', () => {
             if (!this.isCurrentGeneration(generation)) return
             const st = this.pc!.connectionState
-            this.dbg.p('connection=' + st)
+            this.dbg.p(`connection=${st}`)
             this.onConnectionStateChange(st)
-            this.emitDebug('connection=' + st)
+            this.emitDebug(`connection=${st}`)
             this.syncNetRttLifecycle()
             if (!this.roomId) return
             if (st === 'connected') {
@@ -1718,6 +1952,13 @@ export class RTCSignaler {
                     sessionId?: string
                     icePhase: IcePhase
                 }
+                if (!(await this.ensureOwnSlotActive('send-candidate'))) return
+                this.dbg.p('signaling-send:candidate', {
+                    sessionId: this.sessionId ?? null,
+                    generation,
+                    type: candidateType,
+                    phase: this.icePhase,
+                })
                 if (this.role === 'caller')
                     await this.streams.addCallerIceCandidate(candidatePayload as any)
                 else await this.streams.addCalleeIceCandidate(candidatePayload as any)
@@ -2076,6 +2317,7 @@ export class RTCSignaler {
             icePhase: this.icePhase,
             pcGeneration: this.pcGeneration,
             sessionId: this.sessionId,
+            participantId: this.participantId,
             candidateStats: this.candidateStats,
             selectedPath: this.selectedPath,
             ping: this.pingService.getSnapshot(),

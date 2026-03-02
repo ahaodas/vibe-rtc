@@ -25,6 +25,20 @@ export type RoomDoc = {
     creatorUid: string | null
     callerUid: string | null
     calleeUid: string | null
+    slots?: {
+        caller?: {
+            participantId: string
+            sessionId: string
+            joinedAt: number
+            lastSeenAt: number
+        } | null
+        callee?: {
+            participantId: string
+            sessionId: string
+            joinedAt: number
+            lastSeenAt: number
+        } | null
+    }
     offer: OfferSDP | null
     answer: AnswerSDP | null
     epoch?: number
@@ -84,4 +98,14 @@ export interface SignalDB {
      * Optional for adapters that can expose presence state to remote peer.
      */
     leaveRoom?(role: 'caller' | 'callee'): Promise<void>
+
+    /**
+     * Optional local participant id for multi-tab takeover detection.
+     */
+    getParticipantId?(): string | null
+
+    /**
+     * Optional session id currently bound to a role slot.
+     */
+    getRoleSessionId?(role: 'caller' | 'callee'): string | null
 }
