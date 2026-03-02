@@ -20,12 +20,13 @@ import {
     getDoc,
     getDocFromServer,
     getDocs,
-    increment,
     onSnapshot,
+    query,
     runTransaction,
     serverTimestamp,
     setDoc,
     updateDoc,
+    where,
 } from 'firebase/firestore'
 
 const ROOMS = 'rooms'
@@ -36,6 +37,13 @@ const ROOM_TTL_MINUTES = 120
 const sanitize = <T extends Record<string, any>>(o: T): T =>
     Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T
 
+const createId = (prefix: string): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID()
+    }
+    return `${prefix}-${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`
+}
+
 type IceCandidateInput =
     | RTCIceCandidate
     | (RTCIceCandidateInit & {
@@ -45,6 +53,23 @@ type IceCandidateInput =
           gen?: number
           icePhase?: IcePhase | 'TURN_ONLY'
       })
+
+type RoomDocWithSlots = RoomDoc & {
+    slots?: {
+        caller?: {
+            participantId: string
+            sessionId: string
+            joinedAt: number
+            lastSeenAt: number
+        } | null
+        callee?: {
+            participantId: string
+            sessionId: string
+            joinedAt: number
+            lastSeenAt: number
+        } | null
+    }
+}
 
 const toIcePhase = (value: unknown): IcePhase | undefined => {
     if (value === 'LAN' || value === 'STUN' || value === 'STUN_ONLY' || value === 'TURN_ENABLED')
@@ -102,13 +127,18 @@ const candidateSignalKey = (
         icePhase?: string
     },
 ) =>
-    `${ice.epoch ?? -1}|${ice.sessionId ?? 'n/a'}|${ice.icePhase ?? 'n/a'}|${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
+    `${ice.epoch ?? -1}|${ice.sessionId ?? 'n/a'}|${ice.pcGeneration ?? -1}|${ice.gen ?? -1}|${ice.icePhase ?? 'n/a'}|${ice.candidate ?? ''}|${ice.sdpMid ?? ''}|${ice.sdpMLineIndex ?? -1}|${ice.usernameFragment ?? ''}`
 
 export class FBAdapter implements SignalDB {
     private roomRef?: DocumentReference<RoomDoc>
     private callerCol?: CollectionReference<CandidateDoc>
     private calleeCol?: CollectionReference<CandidateDoc>
     private roomEpoch = 0
+    private readonly participantId = createId('participant')
+    private readonly roleSessionByRole: Record<'caller' | 'callee', string | null> = {
+        caller: null,
+        callee: null,
+    }
 
     private unsubs = new Set<() => void>()
 
@@ -125,10 +155,20 @@ export class FBAdapter implements SignalDB {
         }
     }
 
+    getParticipantId(): string {
+        return this.participantId
+    }
+
+    getRoleSessionId(role: 'caller' | 'callee'): string | null {
+        return this.roleSessionByRole[role] ?? null
+    }
+
     // ---------------- Rooms ----------------
     async createRoom(): Promise<string> {
         const uid = this.uid
         if (!uid) throw new Error('Auth required')
+        const sessionId = createId('session')
+        const now = Date.now()
 
         // addDoc semantics: guarantees a new id and no conflict.
         const ref = doc(collection(this.db, ROOMS) as any)
@@ -136,6 +176,15 @@ export class FBAdapter implements SignalDB {
             creatorUid: uid,
             callerUid: uid,
             calleeUid: null,
+            slots: {
+                caller: {
+                    participantId: this.participantId,
+                    sessionId,
+                    joinedAt: now,
+                    lastSeenAt: now,
+                },
+                callee: null,
+            },
             offer: null,
             answer: null,
             epoch: 0,
@@ -148,6 +197,8 @@ export class FBAdapter implements SignalDB {
         this.callerCol = collection(ref, CALLER_CANDIDATES) as CollectionReference<CandidateDoc>
         this.calleeCol = collection(ref, CALLEE_CANDIDATES) as CollectionReference<CandidateDoc>
         this.roomEpoch = 0
+        this.roleSessionByRole.caller = sessionId
+        this.roleSessionByRole.callee = null
         return ref.id
     }
 
@@ -156,84 +207,81 @@ export class FBAdapter implements SignalDB {
         this.roomRef = ref
         this.callerCol = collection(ref, CALLER_CANDIDATES) as CollectionReference<CandidateDoc>
         this.calleeCol = collection(ref, CALLEE_CANDIDATES) as CollectionReference<CandidateDoc>
+        const uid = this.uid
 
-        // If the document does not exist, create it softly via merge (no create()).
-        const snap = await getDoc(ref)
-        if (!snap.exists()) {
-            await setDoc(
+        if (!role) {
+            const snap = await getDoc(ref)
+            if (!snap.exists()) {
+                await setDoc(
+                    ref,
+                    {
+                        creatorUid: null,
+                        callerUid: null,
+                        calleeUid: null,
+                        slots: { caller: null, callee: null },
+                        offer: null,
+                        answer: null,
+                        epoch: 0,
+                        createdAt: serverTimestamp(),
+                        updatedAt: serverTimestamp(),
+                        expiresAt: new Date(Date.now() + ROOM_TTL_MINUTES * 60_000),
+                    } as Partial<RoomDoc>,
+                    { merge: true },
+                )
+            }
+            const latest = (await getDoc(ref)).data() as RoomDocWithSlots | undefined
+            this.roomEpoch = latest?.epoch ?? 0
+            return
+        }
+
+        const nextSessionId = createId('session')
+        const now = Date.now()
+        await runTransaction(this.db, async (tx) => {
+            const snap = await tx.get(ref)
+            const exists = snap.exists()
+            const data = (snap.data() as RoomDocWithSlots | undefined) ?? undefined
+            const slots = {
+                caller: data?.slots?.caller ?? null,
+                callee: data?.slots?.callee ?? null,
+            }
+            slots[role] = {
+                participantId: this.participantId,
+                sessionId: nextSessionId,
+                joinedAt: now,
+                lastSeenAt: now,
+            }
+
+            const baseDoc: Partial<RoomDoc> = exists
+                ? {}
+                : {
+                      creatorUid: uid ?? null,
+                      callerUid: null,
+                      calleeUid: null,
+                      offer: null,
+                      answer: null,
+                      epoch: 0,
+                      createdAt: serverTimestamp(),
+                      expiresAt: new Date(Date.now() + ROOM_TTL_MINUTES * 60_000),
+                  }
+
+            const rolePatch: Partial<RoomDoc> =
+                role === 'caller' ? (uid ? { callerUid: uid } : {}) : uid ? { calleeUid: uid } : {}
+
+            tx.set(
                 ref,
                 {
-                    creatorUid: null,
-                    callerUid: null,
-                    calleeUid: null,
-                    offer: null,
-                    answer: null,
-                    epoch: 0,
-                    createdAt: serverTimestamp(),
+                    ...baseDoc,
+                    ...rolePatch,
+                    slots,
                     updatedAt: serverTimestamp(),
-                    expiresAt: new Date(Date.now() + ROOM_TTL_MINUTES * 60_000),
                 } as Partial<RoomDoc>,
                 { merge: true },
             )
-        }
+        })
 
-        // Initial join for the selected role.
-        let joinedAsNewRole = false
-        const uid = this.uid
-        if (uid) {
-            const fresh = await getDoc(ref)
-            const data = fresh.data() as RoomDoc | undefined
-            if (role === 'caller' && data && data.callerUid == null) {
-                try {
-                    await updateDoc(ref, { callerUid: uid, updatedAt: serverTimestamp() })
-                    joinedAsNewRole = true
-                } catch {
-                    /* not critical */
-                }
-            }
-            if (role === 'callee' && data && data.calleeUid == null) {
-                try {
-                    await updateDoc(ref, { calleeUid: uid, updatedAt: serverTimestamp() })
-                    joinedAsNewRole = true
-                } catch {
-                    /* not critical */
-                }
-            }
-        }
-
-        let latest = (await getDoc(ref)).data() as RoomDoc | undefined
+        const latest = (await getDoc(ref)).data() as RoomDocWithSlots | undefined
         this.roomEpoch = latest?.epoch ?? 0
-
-        // If this is a re-attach of an existing participant (for example, page reload),
-        // bump epoch and clear SDP so both sides move to a new signaling generation.
-        if (
-            uid &&
-            latest &&
-            role &&
-            role === 'caller' &&
-            !joinedAsNewRole &&
-            (role === 'caller' ? latest.callerUid === uid : latest.calleeUid === uid)
-        ) {
-            const hasActivity =
-                !!latest.offer ||
-                !!latest.answer ||
-                !!latest.callerHeartbeatAt ||
-                !!latest.calleeHeartbeatAt ||
-                (latest.epoch ?? 0) > 0
-            if (!hasActivity) return
-            try {
-                await updateDoc(ref, {
-                    epoch: increment(1),
-                    offer: null,
-                    answer: null,
-                    updatedAt: serverTimestamp(),
-                } as any)
-            } catch {
-                /* best effort */
-            }
-            latest = (await getDoc(ref)).data() as RoomDoc | undefined
-            this.roomEpoch = latest?.epoch ?? this.roomEpoch
-        }
+        this.roleSessionByRole[role] = nextSessionId
     }
 
     async getRoom(): Promise<RoomDoc | null> {
@@ -244,8 +292,18 @@ export class FBAdapter implements SignalDB {
         } catch {
             snap = await getDoc(this.roomRef)
         }
-        const room = snap.exists() ? (snap.data() as RoomDoc) : null
-        if (room) this.roomEpoch = room.epoch ?? 0
+        const room = snap.exists() ? (snap.data() as RoomDocWithSlots) : null
+        if (room) {
+            this.roomEpoch = room.epoch ?? 0
+            const callerSlot = room.slots?.caller
+            const calleeSlot = room.slots?.callee
+            if (callerSlot?.participantId === this.participantId) {
+                this.roleSessionByRole.caller = callerSlot.sessionId
+            }
+            if (calleeSlot?.participantId === this.participantId) {
+                this.roleSessionByRole.callee = calleeSlot.sessionId
+            }
+        }
         return room
     }
 
@@ -256,7 +314,7 @@ export class FBAdapter implements SignalDB {
 
         return await runTransaction(this.db, async (tx) => {
             const snap = await tx.get(this.roomRef!)
-            const data = snap.data() as RoomDoc
+            const data = snap.data() as RoomDocWithSlots
             if (data.callerUid == null) {
                 tx.update(this.roomRef!, {
                     callerUid: uid,
@@ -275,7 +333,7 @@ export class FBAdapter implements SignalDB {
 
         return await runTransaction(this.db, async (tx) => {
             const snap = await tx.get(this.roomRef!)
-            const data = snap.data() as RoomDoc
+            const data = snap.data() as RoomDocWithSlots
             if (data.calleeUid == null) {
                 tx.update(this.roomRef!, {
                     calleeUid: uid,
@@ -292,6 +350,7 @@ export class FBAdapter implements SignalDB {
         const field = role === 'caller' ? 'callerHeartbeatAt' : 'calleeHeartbeatAt'
         await updateDoc(this.roomRef, {
             [field]: serverTimestamp(),
+            [`slots.${role}.lastSeenAt`]: Date.now(),
             updatedAt: serverTimestamp(),
         } as any)
     }
@@ -300,37 +359,60 @@ export class FBAdapter implements SignalDB {
         if (!this.roomRef) throw new Error('Room not selected')
         const uid = this.uid
         if (!uid) throw new Error('Auth required')
+        let claimedSessionId: string | null = null
 
-        return await runTransaction(this.db, async (tx) => {
+        const taken = await runTransaction(this.db, async (tx) => {
             const snap = await tx.get(this.roomRef!)
-            const data = snap.data() as RoomDoc
+            const data = snap.data() as RoomDocWithSlots
 
+            const now = Date.now()
             const hb =
                 role === 'caller'
                     ? (data as any).callerHeartbeatAt
                     : (data as any).calleeHeartbeatAt
             const owner = role === 'caller' ? data.callerUid : data.calleeUid
+            const slot = role === 'caller' ? data.slots?.caller : data.slots?.callee
+            const slotLastSeenAt =
+                typeof slot?.lastSeenAt === 'number' && Number.isFinite(slot.lastSeenAt)
+                    ? slot.lastSeenAt
+                    : 0
 
-            const now = Date.now()
             const hbMs = typeof hb?.toMillis === 'function' ? hb.toMillis() : 0
-            const stale = owner != null && hbMs > 0 && now - hbMs > staleMs
+            const staleByHeartbeat = owner != null && hbMs > 0 && now - hbMs > staleMs
+            const staleBySlot = slotLastSeenAt > 0 && now - slotLastSeenAt > staleMs
+            const stale = staleByHeartbeat || staleBySlot
             const free = owner == null
 
             if (free || stale) {
+                const nextSessionId = createId('session')
                 const patch: Partial<RoomDoc> =
                     role === 'caller' ? { callerUid: uid } : { calleeUid: uid }
+                const nextSlots = {
+                    caller: data.slots?.caller ?? null,
+                    callee: data.slots?.callee ?? null,
+                }
+                nextSlots[role] = {
+                    participantId: this.participantId,
+                    sessionId: nextSessionId,
+                    joinedAt: now,
+                    lastSeenAt: now,
+                }
 
                 tx.update(this.roomRef!, {
                     ...patch,
+                    slots: nextSlots,
                     epoch: (data.epoch ?? 0) + 1,
                     offer: null,
                     answer: null,
                     updatedAt: serverTimestamp(),
                 } as Partial<RoomDoc>)
+                claimedSessionId = nextSessionId
                 return true
             }
             return false
         })
+        if (taken && claimedSessionId) this.roleSessionByRole[role] = claimedSessionId
+        return taken
     }
 
     // ---------------- SDP ------------------
@@ -366,7 +448,7 @@ export class FBAdapter implements SignalDB {
 
         try {
             const snap = await getDoc(this.roomRef)
-            const data = snap.data() as RoomDoc | undefined
+            const data = snap.data() as RoomDocWithSlots | undefined
             if (data && !data.calleeUid) {
                 await updateDoc(this.roomRef, { calleeUid: uid } as Partial<RoomDoc>)
             }
@@ -501,32 +583,50 @@ export class FBAdapter implements SignalDB {
         await Promise.all(qs.docs.map((d) => deleteDoc(d.ref)))
     }
 
+    private async clearRoleCandidatesForSession(
+        role: 'caller' | 'callee',
+        sessionId: string | null,
+    ): Promise<void> {
+        if (!sessionId) return
+        const col = role === 'caller' ? this.callerCol : this.calleeCol
+        if (!col) return
+        const qs = await getDocs(query(col, where('sessionId', '==', sessionId)))
+        await Promise.all(qs.docs.map((d) => deleteDoc(d.ref)))
+    }
+
     async leaveRoom(role: 'caller' | 'callee'): Promise<void> {
         if (!this.roomRef) return
+        const localSessionId = this.roleSessionByRole[role]
+        const isOwner = await runTransaction(this.db, async (tx) => {
+            const snap = await tx.get(this.roomRef!)
+            if (!snap.exists()) return false
+            const data = snap.data() as RoomDocWithSlots
+            const slot = role === 'caller' ? data.slots?.caller : data.slots?.callee
+            if (!slot || slot.participantId !== this.participantId) return false
 
-        // Clear local signaling artifacts so remote side can detect peer leave.
-        if (role === 'caller') {
-            await Promise.all([
-                this.clearOffer().catch(() => {}),
-                this.clearCallerCandidates().catch(() => {}),
-            ])
-            await updateDoc(this.roomRef, {
-                callerUid: null,
-                callerHeartbeatAt: null,
-                updatedAt: serverTimestamp(),
-            } as Partial<RoomDoc>)
-            return
-        }
+            if (role === 'caller') {
+                tx.update(this.roomRef!, {
+                    callerUid: null,
+                    callerHeartbeatAt: null,
+                    offer: null,
+                    'slots.caller': null,
+                    updatedAt: serverTimestamp(),
+                } as Partial<RoomDoc>)
+            } else {
+                tx.update(this.roomRef!, {
+                    calleeUid: null,
+                    calleeHeartbeatAt: null,
+                    answer: null,
+                    'slots.callee': null,
+                    updatedAt: serverTimestamp(),
+                } as Partial<RoomDoc>)
+            }
+            return true
+        })
+        if (!isOwner) return
 
-        await Promise.all([
-            this.clearAnswer().catch(() => {}),
-            this.clearCalleeCandidates().catch(() => {}),
-        ])
-        await updateDoc(this.roomRef, {
-            calleeUid: null,
-            calleeHeartbeatAt: null,
-            updatedAt: serverTimestamp(),
-        } as Partial<RoomDoc>)
+        await this.clearRoleCandidatesForSession(role, localSessionId).catch(() => {})
+        this.roleSessionByRole[role] = null
     }
 
     // ------------- End room ------------------
@@ -548,6 +648,8 @@ export class FBAdapter implements SignalDB {
         this.roomRef = undefined
         this.callerCol = undefined
         this.calleeCol = undefined
+        this.roleSessionByRole.caller = null
+        this.roleSessionByRole.callee = null
     }
 
     // ------------- utils ---------------------------
