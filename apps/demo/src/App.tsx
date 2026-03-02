@@ -107,14 +107,12 @@ export function App() {
         typeof netRttRaw === 'number' && Number.isFinite(netRttRaw) && netRttRaw >= 0
             ? Math.round(netRttRaw)
             : null
-    const selectedPath = rtc.debugState?.selectedPath
-    const isRelayRoute = rtc.debugState?.netRtt?.route?.isRelay === true || selectedPath === 'relay'
-    const routeLabel =
-        selectedPath === 'host' || selectedPath === 'srflx'
-            ? 'DIRECT'
-            : isRelayRoute
-              ? 'TURN'
-              : '--'
+    const selectedRoute = rtc.debugState?.netRtt?.route
+    const routeLocalType = selectedRoute?.localCandidateType ?? 'unknown'
+    const routeRemoteType = selectedRoute?.remoteCandidateType ?? 'unknown'
+    const isRelayRoute = selectedRoute?.isRelay === true
+    const routeLabel = selectedRoute ? (isRelayRoute ? 'TURN/Relay' : 'Direct') : 'Unknown'
+    const routeDetails = selectedRoute ? `${routeLocalType} -> ${routeRemoteType}` : 'unknown'
     const netLatencyTone = resolveLatencyTone(netRttMs)
     const hasMessage = messageText.trim().length > 0
     const normalizedJoinRoomId = joinRoomIdInput.trim()
@@ -788,11 +786,12 @@ export function App() {
                                     APP: {appPingMs == null ? '--' : `${appPingMs} ms`}
                                 </div>
                                 <div className="latencyAppLine">
-                                    ROUTE: {routeLabel}
+                                    PATH: {routeLabel}
                                     {isRelayRoute && (
                                         <span className="latencyRelayTag">(TURN)</span>
                                     )}
                                 </div>
+                                <div className="latencyAppLine">ROUTE: {routeDetails}</div>
                             </div>
                             <button
                                 type="button"
