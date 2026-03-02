@@ -72,6 +72,7 @@ export function App() {
     const warningTimerRef = useRef<number | undefined>(undefined)
     const warningCooldownRef = useRef<Record<WarningKey, number>>({ relay: 0, 'high-direct': 0 })
     const highDirectStreakRef = useRef(0)
+    const logListRef = useRef<HTMLUListElement | null>(null)
     const prevModeRef = useRef<ScreenMode>('initial')
     const modeEffectBootRef = useRef(false)
     const [hashPath, setHashPathState] = useState(readHashPath)
@@ -120,7 +121,17 @@ export function App() {
     const isRoomNotFoundError =
         rtc.lastError?.code === 'ROOM_NOT_FOUND' ||
         /room not found|no such document/i.test(rtc.lastError?.message ?? '')
-    const orderedLog = useMemo(() => [...rtc.operationLog].reverse(), [rtc.operationLog])
+    const orderedLog = useMemo(
+        () =>
+            rtc.operationLog
+                .map((entry, index) => ({ entry, index }))
+                .sort((a, b) => {
+                    if (a.entry.at !== b.entry.at) return a.entry.at - b.entry.at
+                    return a.index - b.index
+                })
+                .map((item) => item.entry),
+        [rtc.operationLog],
+    )
     const visibleLog = useMemo(() => {
         const filtered = hideConnectionMessages
             ? orderedLog.filter((entry) => isChannelMessage(entry))
@@ -315,6 +326,16 @@ export function App() {
             void rtc.disconnect().catch(() => {})
         }
     }, [mode, rtc])
+
+    useEffect(() => {
+        const node = logListRef.current
+        if (!node) return
+        if (visibleLog.length === 0) return
+        const id = window.requestAnimationFrame(() => {
+            node.scrollTop = node.scrollHeight
+        })
+        return () => window.cancelAnimationFrame(id)
+    }, [visibleLog])
 
     const createTrackWidthPx = Number.isFinite(createProgressTrackWidthPx)
         ? createProgressTrackWidthPx
@@ -789,21 +810,25 @@ export function App() {
                             <span className="cs-checkbox__label">Hide connection messages</span>
                         </label>
                     </div>
-                    <ul className="logList">
+                    <ul ref={logListRef} className="logList">
                         {visibleLog.length === 0 && (
                             <li className="logEmpty">No visible activity yet.</li>
                         )}
-                        {visibleLog.map((entry, index) => (
-                            <li
-                                key={`${entry.at}-${entry.scope}-${entry.event ?? 'evt'}-${index}`}
-                                className={`logItem scope-${entry.scope} ${isChannelMessage(entry) ? 'isMessage' : ''}`}
-                            >
-                                <span className="logMeta">
-                                    {new Date(entry.at).toLocaleTimeString()} | {entry.scope}
-                                </span>
-                                <span className="logText">{entry.message}</span>
-                            </li>
-                        ))}
+                        {visibleLog.map((entry, index) => {
+                            const isMessageEntry = isChannelMessage(entry)
+                            const scopeLabel = isMessageEntry ? 'CHANNEL' : entry.scope
+                            return (
+                                <li
+                                    key={`${entry.at}-${entry.scope}-${entry.event ?? 'evt'}-${index}`}
+                                    className={`logItem scope-${entry.scope} ${isMessageEntry ? 'isMessage' : ''}`}
+                                >
+                                    <span className="logMeta">
+                                        {new Date(entry.at).toLocaleTimeString()} | {scopeLabel}
+                                    </span>
+                                    <span className="logText">{entry.message}</span>
+                                </li>
+                            )
+                        })}
                     </ul>
 
                     <div className="composer">
