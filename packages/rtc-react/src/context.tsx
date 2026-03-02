@@ -132,6 +132,8 @@ type SignalDBWithPresenceOps = SignalDB & {
             uid?: string | null
         }
     }
+    getParticipantId?: () => string | null
+    getRoleSessionId?: (role: 'caller' | 'callee') => string | null
     claimCallerIfFree?: () => Promise<boolean>
     claimCalleeIfFree?: () => Promise<boolean>
     tryTakeOver?: (role: 'caller' | 'callee', staleMs: number) => Promise<boolean>
@@ -345,6 +347,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 alive = false
             }
             const db = await getSignalDB()
+            const dbWithPresence = db as SignalDBWithPresenceOps
 
             const tick = async () => {
                 if (!alive) return
@@ -374,6 +377,48 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                     const role = activeRoleRef.current
                     const signaler = signalerRef.current
                     if (role && signaler) {
+                        const signalerWithParticipant = signaler as RTCSignaler & {
+                            currentParticipantId?: string | null
+                        }
+                        const roomWithSlots = room as typeof room & {
+                            slots?: {
+                                caller?: { participantId: string } | null
+                                callee?: { participantId: string } | null
+                            }
+                        }
+                        const myParticipantId =
+                            dbWithPresence.getParticipantId?.() ??
+                            signalerWithParticipant.currentParticipantId ??
+                            null
+                        const roleSlot =
+                            role === 'caller'
+                                ? roomWithSlots.slots?.caller
+                                : roomWithSlots.slots?.callee
+                        if (
+                            myParticipantId &&
+                            roleSlot?.participantId &&
+                            roleSlot.participantId !== myParticipantId
+                        ) {
+                            alive = false
+                            roomWatchStopRef.current = null
+                            await disposeSignaler()
+                            pushOperation(
+                                'error',
+                                `takeover-detected role=${role} myParticipantId=${myParticipantId} newOwnerParticipantId=${roleSlot.participantId}`,
+                                'takeover-detected',
+                            )
+                            dispatch({
+                                type: 'SET_LAST_ERROR',
+                                error: normalizeError({
+                                    name: 'RTCError',
+                                    code: 'TAKEOVER_DETECTED',
+                                    message: 'Room slot was taken over in another tab',
+                                }),
+                            })
+                            dispatch({ type: 'SET_ROOM', roomId })
+                            return
+                        }
+
                         const inspect = signaler.inspect()
                         const transportActive =
                             inspect.pcState === 'connected' ||
