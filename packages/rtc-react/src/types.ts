@@ -84,6 +84,12 @@ export interface VibeRTCProviderProps {
     connectionStrategy?: ConnectionStrategy
     /** LAN-first timeout before STUN fallback, ms */
     lanFirstTimeoutMs?: number
+    /** Ping interval in ms for internal RTT probe */
+    pingIntervalMs?: number
+    /** Rolling window size for smoothed RTT */
+    pingWindowSize?: number
+    /** Polling interval in ms for WebRTC stats-based NET RTT */
+    netRttIntervalMs?: number
 
     /** Custom loading component/node */
     renderLoading?: React.ReactNode

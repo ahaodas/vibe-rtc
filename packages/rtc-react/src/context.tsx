@@ -65,8 +65,17 @@ function describeDebugEvent(debugState?: DebugState): string | undefined {
     if (event.startsWith('phase-transition:LAN->STUN')) {
         return 'LAN-first did not complete in time, switching to STUN fallback.'
     }
+    if (event.startsWith('phase-transition:LAN->TURN_ENABLED')) {
+        return 'LAN-first did not complete in time, enabling TURN fallback.'
+    }
+    if (event.startsWith('phase-transition:STUN_ONLY->TURN_ENABLED')) {
+        return 'STUN-only did not connect in time, enabling TURN fallback.'
+    }
     if (event === 'phase=LAN') return 'LAN-first phase is active. Collecting host candidates.'
-    if (event === 'phase=STUN') return 'STUN phase is active. Collecting srflx candidates.'
+    if (event === 'phase=STUN_ONLY') return 'STUN-only phase is active. Collecting srflx candidates.'
+    if (event === 'phase=TURN_ENABLED') {
+        return 'TURN-enabled phase is active. Using TURN server candidates only.'
+    }
     if (event === 'negotiationneeded' || event === 'negotiation-bootstrap') {
         return 'Running offer/answer negotiation.'
     }
@@ -135,6 +144,9 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         rtcConfiguration,
         connectionStrategy,
         lanFirstTimeoutMs,
+        pingIntervalMs,
+        pingWindowSize,
+        netRttIntervalMs,
         renderLoading,
         renderBootError,
         children,
@@ -217,6 +229,9 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 rtcConfiguration,
                 connectionStrategy,
                 lanFirstTimeoutMs,
+                pingIntervalMs,
+                pingWindowSize,
+                netRttIntervalMs,
             })
 
             s.setConnectionStateHandler((pcState) => {
@@ -282,7 +297,16 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             signalerRef.current = s
             return s
         },
-        [getSignalDB, rtcConfiguration, connectionStrategy, lanFirstTimeoutMs, pushOperation],
+        [
+            getSignalDB,
+            rtcConfiguration,
+            connectionStrategy,
+            lanFirstTimeoutMs,
+            pingIntervalMs,
+            pingWindowSize,
+            netRttIntervalMs,
+            pushOperation,
+        ],
     )
 
     const stopRoomWatch = useCallback(() => {

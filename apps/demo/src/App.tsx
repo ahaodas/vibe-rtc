@@ -16,6 +16,10 @@ const CONNECT_PROGRESS_MAX_BEFORE_READY = 0.92
 const CONNECT_PROGRESS_TICK_MS = 140
 const CONNECT_PROGRESS_STEP = 0.01
 const MAX_VISIBLE_LOG_ENTRIES = 120
+const WARNING_STICKY_MS = 8000
+const WARNING_COOLDOWN_MS = 15000
+const HIGH_DIRECT_NET_RTT_MS = 120
+const HIGH_DIRECT_NET_RTT_STREAK = 5
 const readHashPath = () => {
     const raw = window.location.hash.replace(/^#/, '')
     if (!raw) return '/'
@@ -32,6 +36,17 @@ function isChannelMessage(entry: VibeRTCOperationLogEntry): boolean {
     return entry.event?.startsWith('message:') ?? false
 }
 
+type LatencyTone = 'none' | 'good' | 'ok' | 'warn' | 'bad'
+type WarningKey = 'relay' | 'high-direct'
+
+function resolveLatencyTone(latencyMs: number | null): LatencyTone {
+    if (latencyMs == null) return 'none'
+    if (latencyMs < 20) return 'good'
+    if (latencyMs < 60) return 'ok'
+    if (latencyMs < 120) return 'warn'
+    return 'bad'
+}
+
 export function App() {
     const rtc = useVibeRTC()
     const [messageText, setMessageText] = useState('')
@@ -45,11 +60,15 @@ export function App() {
     const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false)
     const [leavePending, setLeavePending] = useState(false)
     const [removeRoomOnLeave, setRemoveRoomOnLeave] = useState(true)
+    const [netWarning, setNetWarning] = useState<{ key: WarningKey; message: string } | null>(null)
     const [calleeQrDataUrl, setCalleeQrDataUrl] = useState('')
     const autoRouteHandledRef = useRef<string | null>(null)
     const createProgressTrackRef = useRef<HTMLDivElement | null>(null)
     const connectProgressTrackRef = useRef<HTMLDivElement | null>(null)
     const prevOverallStatusRef = useRef<string | null>(null)
+    const warningTimerRef = useRef<number | undefined>(undefined)
+    const warningCooldownRef = useRef<Record<WarningKey, number>>({ relay: 0, 'high-direct': 0 })
+    const highDirectStreakRef = useRef(0)
     const [hashPath, setHashPathState] = useState(readHashPath)
 
     useEffect(() => {
@@ -69,6 +88,28 @@ export function App() {
     const reliableReady =
         reliableState === 'open' || (rtc.overallStatus === 'connected' && !reliableState)
     const channelReadyForMessages = fastReady || reliableReady
+    const appSmoothedPing = rtc.debugState?.ping?.smoothedRttMs
+    const appLastPing = rtc.debugState?.ping?.lastRttMs
+    const appPingRaw = typeof appSmoothedPing === 'number' ? appSmoothedPing : appLastPing
+    const appPingMs =
+        typeof appPingRaw === 'number' && Number.isFinite(appPingRaw) && appPingRaw >= 0
+            ? Math.round(appPingRaw)
+            : null
+    const netRttRaw = rtc.debugState?.netRtt?.rttMs
+    const netRttMs =
+        typeof netRttRaw === 'number' && Number.isFinite(netRttRaw) && netRttRaw >= 0
+            ? Math.round(netRttRaw)
+            : null
+    const selectedPath = rtc.debugState?.selectedPath
+    const isRelayRoute =
+        rtc.debugState?.netRtt?.route?.isRelay === true || selectedPath === 'relay'
+    const routeLabel =
+        selectedPath === 'host' || selectedPath === 'srflx'
+            ? 'DIRECT'
+            : isRelayRoute
+              ? 'TURN'
+              : '--'
+    const netLatencyTone = resolveLatencyTone(netRttMs)
     const hasMessage = messageText.trim().length > 0
     const orderedLog = useMemo(() => [...rtc.operationLog].reverse(), [rtc.operationLog])
     const visibleLog = useMemo(() => {
@@ -136,6 +177,55 @@ export function App() {
             setQrModalOpen(false)
         }
     }, [mode, channelReadyForMessages])
+
+    useEffect(() => {
+        return () => {
+            if (warningTimerRef.current) {
+                window.clearTimeout(warningTimerRef.current)
+                warningTimerRef.current = undefined
+            }
+        }
+    }, [])
+
+    useEffect(() => {
+        const showWarning = (key: WarningKey, message: string) => {
+            const nowTs = Date.now()
+            const lastTs = warningCooldownRef.current[key] ?? 0
+            if (nowTs - lastTs < WARNING_COOLDOWN_MS) return
+
+            warningCooldownRef.current[key] = nowTs
+            setNetWarning({ key, message })
+
+            if (warningTimerRef.current) window.clearTimeout(warningTimerRef.current)
+            warningTimerRef.current = window.setTimeout(() => {
+                setNetWarning((current) => (current?.key === key ? null : current))
+                warningTimerRef.current = undefined
+            }, WARNING_STICKY_MS)
+        }
+
+        if (isRelayRoute) {
+            highDirectStreakRef.current = 0
+            showWarning(
+                'relay',
+                'Using TURN/relay. May increase latency even on local network.',
+            )
+            return
+        }
+
+        if (typeof netRttMs === 'number' && netRttMs > HIGH_DIRECT_NET_RTT_MS) {
+            highDirectStreakRef.current += 1
+            if (highDirectStreakRef.current >= HIGH_DIRECT_NET_RTT_STREAK) {
+                showWarning(
+                    'high-direct',
+                    'High network RTT on direct connection — check Wi-Fi / power saving / device load.',
+                )
+                highDirectStreakRef.current = 0
+            }
+            return
+        }
+
+        highDirectStreakRef.current = 0
+    }, [isRelayRoute, netRttMs])
 
     useEffect(() => {
         if (!createPending || rtc.booting) return
@@ -488,15 +578,31 @@ export function App() {
                 <header className="screenHeader">
                     <div className="screenHeaderTop">
                         <h1>{mode.toUpperCase()}</h1>
-                        <button
-                            type="button"
-                            className="cs-btn close screenCloseBtn"
-                            aria-label="Close session"
-                            onClick={() => {
-                                setRemoveRoomOnLeave(mode === 'caller')
-                                setLeaveConfirmOpen(true)
-                            }}
-                        />
+                        <div className="screenHeaderActions">
+                                <div className={`latencyHud net-${netLatencyTone}`}>
+                                    <div className="latencyNetLine">
+                                        NET: {netRttMs == null ? '--' : `${netRttMs} ms`}
+                                    </div>
+                                    <div className="latencyAppLine">
+                                        APP: {appPingMs == null ? '--' : `${appPingMs} ms`}
+                                    </div>
+                                    <div className="latencyAppLine">
+                                        ROUTE: {routeLabel}
+                                        {isRelayRoute && (
+                                            <span className="latencyRelayTag">(TURN)</span>
+                                        )}
+                                    </div>
+                                </div>
+                            <button
+                                type="button"
+                                className="cs-btn close screenCloseBtn"
+                                aria-label="Close session"
+                                onClick={() => {
+                                    setRemoveRoomOnLeave(mode === 'caller')
+                                    setLeaveConfirmOpen(true)
+                                }}
+                            />
+                        </div>
                     </div>
                     <div className="roomRow">
                         <label htmlFor="room-id" className="roomLabel">
@@ -524,6 +630,7 @@ export function App() {
                     <p className={`statusLine status-${rtc.overallStatus}`}>
                         {rtc.overallStatusText}
                     </p>
+                    {netWarning && <p className="statusWarning">{netWarning.message}</p>}
                     <div ref={connectProgressTrackRef} className="cs-progress-bar statusProgress">
                         <div
                             style={{ width: `${connectProgressWidthPercentSafe}%` }}

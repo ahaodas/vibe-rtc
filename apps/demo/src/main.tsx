@@ -44,6 +44,9 @@ const rtcConfig: RTCConfiguration = {
     iceCandidatePoolSize: 10,
 }
 const DEMO_LAN_FIRST_TIMEOUT_MS = 4500
+const DEMO_PING_INTERVAL_MS = 1000
+const DEMO_PING_WINDOW_SIZE = 5
+const DEMO_NET_RTT_INTERVAL_MS = 1000
 const PROGRESS_STEP_PX = 10
 
 function BootLoadingOverlay() {
@@ -113,6 +116,9 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
             rtcConfiguration={rtcConfig}
             connectionStrategy="LAN_FIRST"
             lanFirstTimeoutMs={DEMO_LAN_FIRST_TIMEOUT_MS}
+            pingIntervalMs={DEMO_PING_INTERVAL_MS}
+            pingWindowSize={DEMO_PING_WINDOW_SIZE}
+            netRttIntervalMs={DEMO_NET_RTT_INTERVAL_MS}
             renderLoading={<BootLoadingOverlay />}
             renderBootError={(error) => (
                 <div className="appModalBackdrop" role="alert" aria-live="assertive">

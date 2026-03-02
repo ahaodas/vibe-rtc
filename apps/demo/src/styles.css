@@ -104,6 +104,12 @@ body {
     gap: 10px;
 }
 
+.screenHeaderActions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
 .screenHeader h1 {
     margin: 0;
     color: var(--secondary-text);
@@ -112,6 +118,53 @@ body {
 
 .screenCloseBtn {
     flex: 0 0 auto;
+}
+
+.latencyHud {
+    min-width: 130px;
+    padding: 4px 8px;
+    border: 1px solid var(--border-light);
+    box-shadow: 1px 1px 0 var(--border-dark);
+    background: var(--bg);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    line-height: 1.25;
+}
+
+.latencyNetLine,
+.latencyAppLine {
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.latencyAppLine {
+    color: var(--text-3);
+}
+
+.latencyRelayTag {
+    margin-left: 6px;
+    color: var(--secondary-accent);
+}
+
+.net-none .latencyNetLine {
+    color: var(--text-3);
+}
+
+.net-good .latencyNetLine {
+    color: #8fdb67;
+}
+
+.net-ok .latencyNetLine {
+    color: #d8d778;
+}
+
+.net-warn .latencyNetLine {
+    color: #d9a15d;
+}
+
+.net-bad .latencyNetLine {
+    color: #d36c63;
 }
 
 .roomRow {
@@ -154,6 +207,12 @@ body {
 .statusLine {
     margin: 0;
     font-size: 13px;
+}
+
+.statusWarning {
+    margin: 0;
+    font-size: 12px;
+    color: var(--secondary-accent);
 }
 
 .statusProgress {
