@@ -1,6 +1,7 @@
 export * from './connection-strategy'
 export * from './errors'
 export * from './ice-config'
+export * from './metrics/icePath'
 export * from './metrics/netRtt'
 export * from './protocol/ping'
 export { type DebugState, RTCSignaler } from './RTCSignaler'

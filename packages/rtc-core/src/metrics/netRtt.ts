@@ -1,3 +1,8 @@
+import {
+    extractSelectedIcePath,
+    type IcePathSelectionMethod,
+} from './icePath'
+
 const DEFAULT_INTERVAL_MS = 1000
 
 export type NetRttSnapshot = {
@@ -18,27 +23,12 @@ export type NetRttSnapshot = {
         localCandidateType?: 'host' | 'srflx' | 'relay' | string
         remoteCandidateType?: 'host' | 'srflx' | 'relay' | string
         isRelay?: boolean
+        pairId?: string
+        nominated?: boolean
+        selectionMethod?: IcePathSelectionMethod
     }
-}
-
-type CandidatePairStats = RTCStats & {
-    id: string
-    type: 'candidate-pair'
-    state?: string
-    selected?: boolean
-    nominated?: boolean
-    localCandidateId?: string
-    remoteCandidateId?: string
-    currentRoundTripTime?: number
-    availableOutgoingBitrate?: number
-    bytesSent?: number
-    bytesReceived?: number
-}
-
-type CandidateStats = RTCStats & {
-    id: string
-    type: 'local-candidate' | 'remote-candidate'
-    candidateType?: string
+    pathSelectionMethod?: IcePathSelectionMethod
+    pathReason?: string
 }
 
 type NetRttServiceOptions = {
@@ -53,6 +43,7 @@ export type NetRttService = {
     stop: () => void
     reset: () => void
     pause: () => void
+    refresh: () => Promise<void>
     getSnapshot: () => NetRttSnapshot
 }
 
@@ -88,50 +79,13 @@ const cloneSnapshot = (snapshot: NetRttSnapshot): NetRttSnapshot => ({
     route: snapshot.route ? { ...snapshot.route } : undefined,
 })
 
-const isCandidatePair = (report: RTCStats): report is CandidatePairStats =>
-    report.type === 'candidate-pair'
-
-const isCandidate = (report: RTCStats): report is CandidateStats =>
-    report.type === 'local-candidate' || report.type === 'remote-candidate'
-
-const preferSelectedPair = (pairs: CandidatePairStats[]): CandidatePairStats | undefined => {
-    const nominatedSucceeded = pairs.find(
-        (pair) => pair.nominated === true && pair.state === 'succeeded',
-    )
-    if (nominatedSucceeded) return nominatedSucceeded
-
-    const selectedSucceeded = pairs.find(
-        (pair) => pair.selected === true && pair.state === 'succeeded',
-    )
-    if (selectedSucceeded) return selectedSucceeded
-
-    const selected = pairs.find((pair) => pair.selected === true)
-    if (selected) return selected
-
-    return pairs.find((pair) => pair.state === 'succeeded')
-}
-
-const extractCandidateType = (candidate: CandidateStats | undefined): string | undefined => {
-    if (!candidate) return undefined
-    return typeof candidate.candidateType === 'string' ? candidate.candidateType : undefined
-}
-
-const readStatsList = (report: RTCStatsReport): RTCStats[] => {
-    const values: RTCStats[] = []
-    report.forEach((entry) => {
-        values.push(entry)
-    })
-    return values
-}
-
 const buildSnapshotFromStats = (
     stats: RTCStatsReport,
     prevRttMs: number | null,
     now: () => number,
 ): NetRttSnapshot => {
-    const reports = readStatsList(stats)
-    const candidatePairs = reports.filter(isCandidatePair)
-    const selectedPair = preferSelectedPair(candidatePairs)
+    const selectedPath = extractSelectedIcePath(stats)
+    const selectedPair = selectedPath.pair
     const rttMs = selectedPair ? secondsToMs(selectedPair.currentRoundTripTime) : null
     const jitterMs =
         rttMs != null && prevRttMs != null
@@ -144,23 +98,20 @@ const buildSnapshotFromStats = (
             jitterMs: null,
             lastUpdatedAt: now(),
             status: 'running',
+            pathSelectionMethod: selectedPath.selectionMethod,
+            pathReason: selectedPath.diagnostics?.reason,
         }
     }
 
-    const candidates = reports.filter(isCandidate)
-    const localCandidate = candidates.find((report) => report.id === selectedPair.localCandidateId)
-    const remoteCandidate = candidates.find(
-        (report) => report.id === selectedPair.remoteCandidateId,
-    )
-    const localCandidateType = extractCandidateType(localCandidate)
-    const remoteCandidateType = extractCandidateType(remoteCandidate)
-    const isRelay = localCandidateType === 'relay' || remoteCandidateType === 'relay'
+    const route = selectedPath.route
 
     return {
         rttMs,
         jitterMs,
         lastUpdatedAt: now(),
         status: 'running',
+        pathSelectionMethod: selectedPath.selectionMethod,
+        pathReason: selectedPath.diagnostics?.reason,
         selectedPair: {
             id: selectedPair.id,
             state: selectedPair.state,
@@ -170,11 +121,16 @@ const buildSnapshotFromStats = (
             bytesSent: toNullableNumber(selectedPair.bytesSent),
             bytesReceived: toNullableNumber(selectedPair.bytesReceived),
         },
-        route: {
-            localCandidateType,
-            remoteCandidateType,
-            isRelay,
-        },
+        route: route
+            ? {
+                  localCandidateType: route.localType,
+                  remoteCandidateType: route.remoteType,
+                  isRelay: route.isTurn,
+                  pairId: route.pairId,
+                  nominated: route.nominated,
+                  selectionMethod: selectedPath.selectionMethod,
+              }
+            : undefined,
     }
 }
 
@@ -250,6 +206,10 @@ export const createNetRttService = (options: NetRttServiceOptions): NetRttServic
         }
     }
 
+    const refresh = async () => {
+        await poll()
+    }
+
     const start = () => {
         if (intervalId) return
         if (isClosedPc(options.peerConnection)) {
@@ -261,9 +221,9 @@ export const createNetRttService = (options: NetRttServiceOptions): NetRttServic
             status: 'running',
             lastUpdatedAt: now(),
         })
-        void poll()
+        void refresh()
         intervalId = setInterval(() => {
-            void poll()
+            void refresh()
         }, intervalMs)
     }
 
@@ -272,6 +232,7 @@ export const createNetRttService = (options: NetRttServiceOptions): NetRttServic
         stop,
         pause,
         reset,
+        refresh,
         getSnapshot: () => cloneSnapshot(snapshot),
     }
 }

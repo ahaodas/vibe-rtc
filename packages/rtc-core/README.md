@@ -76,7 +76,7 @@ With `connectionStrategy: "LAN_FIRST"`:
 - Phase `LAN`: `RTCPeerConnection` starts with `iceServers: []` and only `typ host` candidates are sent/accepted.
 - Phase `STUN`: if not connected before `lanFirstTimeoutMs`, the current peer is closed and rebuilt with STUN enabled.
 - Signaling payload format is backward-compatible. Signaling messages include `sessionId` and stale messages from old sessions are ignored.
-- Debug snapshots (`onDebug`) include strategy phase, candidate counters by type (`host`/`srflx`/`relay`) and best-effort selected path inference.
+- Debug snapshots (`onDebug`) include strategy phase, candidate counters by type (`host`/`srflx`/`relay`) and selected ICE route from `getStats()` (`transport.selectedCandidatePairId` / nominated fallback).
 
 ## Takeover / Session Isolation
 

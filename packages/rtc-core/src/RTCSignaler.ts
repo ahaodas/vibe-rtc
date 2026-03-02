@@ -275,6 +275,7 @@ export class RTCSignaler {
     private pcGeneration = 0
     private controlledPeerRebuild = false
     private selectedPath: CandidateType | undefined
+    private selectedPathDiagnosticsKey: string | null = null
     private readonly pingService: PingService
     private netRttService?: NetRttService
     private remoteProgressSeq = 0
@@ -492,6 +493,7 @@ export class RTCSignaler {
         }
         this.connectedOrSubbed = true
         this.selectedPath = undefined
+        this.selectedPathDiagnosticsKey = null
         this.loggedStaleSessionKeys.clear()
         this.seenRemoteOfferSessions.clear()
         this.stunWatchdogReconnects = 0
@@ -1711,40 +1713,72 @@ export class RTCSignaler {
         counter[type] = (counter[type] ?? 0) + 1
     }
 
-    private captureSelectedPath() {
-        if (this.selectedPath) return
-        if (this.icePhase === 'LAN') {
-            this.selectedPath = 'host'
-            this.dbg.p('selected path inferred host (LAN phase)')
-            this.emitDebug('selected-path:host')
-            return
-        }
-        if (this.icePhase === 'TURN_ENABLED') {
-            this.selectedPath = 'relay'
-            this.dbg.p('selected path inferred relay (TURN_ENABLED phase)')
-            this.emitDebug('selected-path:relay')
-            return
+    private mapSelectedPathFromRoute(route: NetRttSnapshot['route']): CandidateType | undefined {
+        if (!route) return undefined
+        const localType = route.localCandidateType?.toLowerCase()
+        const remoteType = route.remoteCandidateType?.toLowerCase()
+        if (route.isRelay === true || localType === 'relay' || remoteType === 'relay') {
+            return 'relay'
         }
         if (
-            this.candidateStats.remoteAccepted.srflx > 0 ||
-            this.candidateStats.localSent.srflx > 0
+            localType === 'srflx' ||
+            remoteType === 'srflx' ||
+            localType === 'prflx' ||
+            remoteType === 'prflx'
         ) {
-            this.selectedPath = 'srflx'
-        } else if (
-            this.candidateStats.remoteAccepted.relay > 0 ||
-            this.candidateStats.localSent.relay > 0
-        ) {
-            this.selectedPath = 'relay'
-        } else if (
-            this.candidateStats.remoteAccepted.host > 0 ||
-            this.candidateStats.localSent.host > 0
-        ) {
-            this.selectedPath = 'host'
-        } else {
-            this.selectedPath = 'unknown'
+            return 'srflx'
         }
-        this.dbg.p(`selected path inferred ${this.selectedPath}`)
-        this.emitDebug(`selected-path:${this.selectedPath}`)
+        if (localType === 'host' || remoteType === 'host') {
+            return 'host'
+        }
+        return 'unknown'
+    }
+
+    private updateSelectedPathFromNetRtt(snapshot: NetRttSnapshot, source: string) {
+        const nextPath = this.mapSelectedPathFromRoute(snapshot.route)
+        const diagnosticsReason =
+            snapshot.pathReason ?? 'selected ICE candidate pair is not available yet'
+
+        if (!nextPath || nextPath === 'unknown') {
+            if (this.selectedPath !== 'unknown') {
+                this.selectedPath = 'unknown'
+                this.emitDebug('selected-path:unknown')
+            }
+            const diagnosticsKey = `${this.pcGeneration}:${diagnosticsReason}`
+            if (this.selectedPathDiagnosticsKey !== diagnosticsKey) {
+                this.selectedPathDiagnosticsKey = diagnosticsKey
+                this.dbg.p('selected path unavailable', {
+                    source,
+                    reason: diagnosticsReason,
+                    selectionMethod: snapshot.pathSelectionMethod ?? 'unknown',
+                })
+            }
+            return
+        }
+
+        this.selectedPathDiagnosticsKey = null
+        if (this.selectedPath === nextPath) return
+
+        this.selectedPath = nextPath
+        this.dbg.p('selected path resolved from getStats()', {
+            source,
+            path: nextPath,
+            localType: snapshot.route?.localCandidateType ?? 'unknown',
+            remoteType: snapshot.route?.remoteCandidateType ?? 'unknown',
+            pairId: snapshot.route?.pairId ?? snapshot.selectedPair?.id ?? null,
+            nominated: snapshot.route?.nominated ?? snapshot.selectedPair?.nominated ?? false,
+            selectionMethod: snapshot.pathSelectionMethod ?? 'unknown',
+        })
+        this.emitDebug(`selected-path:${nextPath}`)
+    }
+
+    private captureSelectedPath(source: string) {
+        const netRtt = this.netRttService
+        if (!netRtt) return
+        this.updateSelectedPathFromNetRtt(netRtt.getSnapshot(), `${source}:snapshot`)
+        void netRtt.refresh().catch(() => {
+            this.dbg.p('selected path refresh failed', { source })
+        })
     }
 
     private initPeer(nextSessionId?: string) {
@@ -1757,13 +1791,16 @@ export class RTCSignaler {
         this.netRttService = undefined
         const generation = ++this.pcGeneration
         this.sessionId = nextSessionId ?? this.sessionId ?? createSessionId()
+        this.selectedPathDiagnosticsKey = null
         const rtcConfig = this.buildRtcConfigForPhase(this.icePhase)
         const iceSummary = summarizeIceServers(rtcConfig.iceServers ?? [])
         this.pc = new RTCPeerConnection(rtcConfig)
         this.netRttService = createNetRttService({
             peerConnection: this.pc,
             intervalMs: this.netRttIntervalMs,
-            onUpdate: () => {
+            onUpdate: (snapshot) => {
+                if (!this.isCurrentGeneration(generation)) return
+                this.updateSelectedPathFromNetRtt(snapshot, 'net-rtt:update')
                 this.emitDebug()
             },
         })
@@ -1806,7 +1843,7 @@ export class RTCSignaler {
                 this.clearRecoveryTimers()
                 this.clearLanFirstTimer()
                 this.clearStunOnlyTimer()
-                this.captureSelectedPath()
+                this.captureSelectedPath('ice=connected')
                 this.scheduleCallerDcRecovery(generation, 'ice=connected')
                 this.clearConnectingWatchdogTimer()
                 this.connectingWatchdogGeneration = undefined
@@ -1815,7 +1852,7 @@ export class RTCSignaler {
             if (s === 'completed') {
                 this.clearLanFirstTimer()
                 this.clearStunOnlyTimer()
-                this.captureSelectedPath()
+                this.captureSelectedPath('ice=completed')
                 this.scheduleCallerDcRecovery(generation, 'ice=completed')
                 this.clearConnectingWatchdogTimer()
                 this.connectingWatchdogGeneration = undefined
@@ -1864,7 +1901,7 @@ export class RTCSignaler {
                 this.clearRecoveryTimers()
                 this.clearLanFirstTimer()
                 this.clearStunOnlyTimer()
-                this.captureSelectedPath()
+                this.captureSelectedPath('connection=connected')
                 this.scheduleCallerDcRecovery(generation, 'connection=connected')
                 this.clearConnectingWatchdogTimer()
                 this.connectingWatchdogGeneration = undefined
