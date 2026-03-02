@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { RTCError, RTCErrorCode } from '../src/errors'
 import { RTCSignaler } from '../src/RTCSignaler'
 import type { RoomDoc, SignalDB } from '../src/types'
 
@@ -245,6 +246,98 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         expect(reconnectHard).toHaveBeenCalledTimes(1)
     })
 
+    it('uses longer connecting watchdog timeout in STUN phase', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'DEFAULT',
+        })
+        await signaler.joinRoom('room-stun-watchdog')
+        await signaler.connect()
+
+        const reconnectHard = vi.fn().mockResolvedValue(undefined)
+        ;(signaler as any).reconnectHard = reconnectHard
+
+        const pc = FakeRTCPeerConnection.instances[0]
+        pc.connectionState = 'connecting'
+        pc.emit('connectionstatechange')
+
+        await vi.advanceTimersByTimeAsync(6_600)
+        expect(reconnectHard).toHaveBeenCalledTimes(0)
+
+        await vi.advanceTimersByTimeAsync(23_600)
+        expect(reconnectHard).toHaveBeenCalledTimes(1)
+    })
+
+    it('limits STUN connecting watchdog hard reconnect attempts', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'DEFAULT',
+        })
+        await signaler.joinRoom('room-stun-watchdog-limit')
+        await signaler.connect()
+
+        const reconnectHard = vi.fn().mockResolvedValue(undefined)
+        ;(signaler as any).reconnectHard = reconnectHard
+
+        const pc = FakeRTCPeerConnection.instances[0]
+        pc.connectionState = 'connecting'
+
+        pc.emit('connectionstatechange')
+        await vi.advanceTimersByTimeAsync(30_100)
+        expect(reconnectHard).toHaveBeenCalledTimes(1)
+
+        pc.emit('connectionstatechange')
+        await vi.advanceTimersByTimeAsync(30_100)
+        expect(reconnectHard).toHaveBeenCalledTimes(2)
+
+        pc.emit('connectionstatechange')
+        await vi.advanceTimersByTimeAsync(30_100)
+        expect(reconnectHard).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not surface WAIT_READY_TIMEOUT from automatic hard reconnect', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'DEFAULT',
+        })
+        const onError = vi.fn()
+        signaler.setErrorHandler(onError)
+
+        await signaler.joinRoom('room-hard-timeout-suppressed')
+        await signaler.connect()
+
+        ;(signaler as any).reconnectHard = vi.fn().mockRejectedValue(
+            new RTCError(RTCErrorCode.WAIT_READY_TIMEOUT, {
+                message: 'waitReady timeout',
+                phase: 'transport',
+                retriable: true,
+            }),
+        )
+
+        const pc = FakeRTCPeerConnection.instances[0]
+        pc.connectionState = 'failed'
+        pc.emit('connectionstatechange')
+        await Promise.resolve()
+        await Promise.resolve()
+
+        expect(onError).toHaveBeenCalledTimes(0)
+    })
+
     it('does not poison remote generation from echoed answer', async () => {
         vi.stubGlobal(
             'RTCPeerConnection',
@@ -318,6 +411,48 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
             .filter((sdp) => sdp.includes('o=caller'))
         expect(offerSdps).toContain('v=0\r\no=caller 2 2 IN IP4 0.0.0.0\r\n')
         expect(offerSdps.length).toBeGreaterThanOrEqual(2)
+    })
+
+    it('rebuilds callee peer when remote offer generation is ahead in STUN phase', async () => {
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+        stubRtcSessionDescription()
+
+        let offerCb:
+            | ((offer: RTCSessionDescriptionInit & { pcGeneration?: number }) => void)
+            | undefined
+
+        const signaler = new RTCSignaler(
+            'callee',
+            makeDb({
+                subscribeOnOffer: (cb) => {
+                    offerCb = cb as (
+                        offer: RTCSessionDescriptionInit & { pcGeneration?: number },
+                    ) => void
+                    return () => {}
+                },
+            }),
+            {
+                connectionStrategy: 'DEFAULT',
+            },
+        )
+
+        await signaler.joinRoom('room-callee-generation-sync')
+        await signaler.connect()
+        expect(FakeRTCPeerConnection.instances.length).toBe(1)
+
+        offerCb?.({
+            type: 'offer',
+            sdp: 'v=0\r\no=caller 3 3 IN IP4 0.0.0.0\r\n',
+            pcGeneration: 2,
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        expect(FakeRTCPeerConnection.instances.length).toBe(2)
     })
 
     it('caller ignores stale answers by forPcGeneration marker', async () => {
