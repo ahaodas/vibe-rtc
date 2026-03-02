@@ -501,6 +501,34 @@ export class FBAdapter implements SignalDB {
         await Promise.all(qs.docs.map((d) => deleteDoc(d.ref)))
     }
 
+    async leaveRoom(role: 'caller' | 'callee'): Promise<void> {
+        if (!this.roomRef) return
+
+        // Clear local signaling artifacts so remote side can detect peer leave.
+        if (role === 'caller') {
+            await Promise.all([
+                this.clearOffer().catch(() => {}),
+                this.clearCallerCandidates().catch(() => {}),
+            ])
+            await updateDoc(this.roomRef, {
+                callerUid: null,
+                callerHeartbeatAt: null,
+                updatedAt: serverTimestamp(),
+            } as Partial<RoomDoc>)
+            return
+        }
+
+        await Promise.all([
+            this.clearAnswer().catch(() => {}),
+            this.clearCalleeCandidates().catch(() => {}),
+        ])
+        await updateDoc(this.roomRef, {
+            calleeUid: null,
+            calleeHeartbeatAt: null,
+            updatedAt: serverTimestamp(),
+        } as Partial<RoomDoc>)
+    }
+
     // ------------- End room ------------------
 
     async endRoom(): Promise<void> {

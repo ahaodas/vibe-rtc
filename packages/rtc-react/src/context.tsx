@@ -157,6 +157,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
 
     const signalDbRef = useRef<SignalDB | null>(null)
     const signalerRef = useRef<RTCSignaler | null>(null)
+    const activeRoleRef = useRef<'caller' | 'callee' | null>(null)
     const initPromiseRef = useRef<Promise<SignalDB> | null>(null)
     const autoHeartbeatStopRef = useRef<(() => void) | null>(null)
     const roomWatchStopRef = useRef<(() => void) | null>(null)
@@ -296,6 +297,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             })
 
             signalerRef.current = s
+            activeRoleRef.current = role
             return s
         },
         [
@@ -325,6 +327,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         stopRoomWatch()
         const s = signalerRef.current
         signalerRef.current = null
+        activeRoleRef.current = null
         if (s) {
             pushOperation('system', 'Disposing current RTC session', 'session:dispose')
             try {
@@ -366,6 +369,39 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                         })
                         dispatch({ type: 'SET_ROOM', roomId })
                         return
+                    }
+
+                    const role = activeRoleRef.current
+                    const signaler = signalerRef.current
+                    if (role && signaler) {
+                        const inspect = signaler.inspect()
+                        const transportActive =
+                            inspect.pcState === 'connected' ||
+                            inspect.fast?.state === 'open' ||
+                            inspect.reliable?.state === 'open'
+                        const remoteLeft =
+                            role === 'caller' ? room.calleeUid == null : room.callerUid == null
+                        if (transportActive && remoteLeft) {
+                            alive = false
+                            roomWatchStopRef.current = null
+                            await disposeSignaler()
+                            const remoteRole = role === 'caller' ? 'callee' : 'caller'
+                            pushOperation(
+                                'system',
+                                `${remoteRole.toUpperCase()} ended session`,
+                                'peer:left',
+                            )
+                            dispatch({
+                                type: 'SET_LAST_ERROR',
+                                error: normalizeError({
+                                    name: 'RTCError',
+                                    code: 'PEER_LEFT',
+                                    message: `${remoteRole} ended session`,
+                                }),
+                            })
+                            dispatch({ type: 'SET_ROOM', roomId })
+                            return
+                        }
                     }
                 } catch {}
                 if (alive) setTimeout(() => void tick(), 2000)

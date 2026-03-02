@@ -916,6 +916,11 @@ export class RTCSignaler {
         })
         this.unsubscribes = []
 
+        // Best-effort presence signal so remote peer can react quickly to manual leave.
+        try {
+            await this.signalDb.leaveRoom?.(this.role)
+        } catch {}
+
         this.cleanupPeerOnly()
         this.connectedOrSubbed = false
         this.phase = 'idle'

@@ -78,4 +78,10 @@ export interface SignalDB {
 
     /** Fully terminate a room: unsubscribe, delete candidates, and remove room document */
     endRoom(): Promise<void>
+
+    /**
+     * Soft-leave current room for a role (without deleting room).
+     * Optional for adapters that can expose presence state to remote peer.
+     */
+    leaveRoom?(role: 'caller' | 'callee'): Promise<void>
 }
