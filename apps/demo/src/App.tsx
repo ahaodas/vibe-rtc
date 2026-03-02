@@ -51,11 +51,14 @@ export function App() {
     const rtc = useVibeRTC()
     const [messageText, setMessageText] = useState('')
     const [createPending, setCreatePending] = useState(false)
+    const [joinModalOpen, setJoinModalOpen] = useState(false)
+    const [joinRoomIdInput, setJoinRoomIdInput] = useState('')
+    const [roomNotFoundModalOpen, setRoomNotFoundModalOpen] = useState(false)
     const [createProgressRatio, setCreateProgressRatio] = useState(0)
     const [createProgressTrackWidthPx, setCreateProgressTrackWidthPx] = useState(0)
     const [connectProgressRatio, setConnectProgressRatio] = useState(0)
     const [connectProgressTrackWidthPx, setConnectProgressTrackWidthPx] = useState(0)
-    const [onlyChatMessages, setOnlyChatMessages] = useState(true)
+    const [hideConnectionMessages, setHideConnectionMessages] = useState(true)
     const [qrModalOpen, setQrModalOpen] = useState(false)
     const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false)
     const [leavePending, setLeavePending] = useState(false)
@@ -69,6 +72,8 @@ export function App() {
     const warningTimerRef = useRef<number | undefined>(undefined)
     const warningCooldownRef = useRef<Record<WarningKey, number>>({ relay: 0, 'high-direct': 0 })
     const highDirectStreakRef = useRef(0)
+    const prevModeRef = useRef<ScreenMode>('initial')
+    const modeEffectBootRef = useRef(false)
     const [hashPath, setHashPathState] = useState(readHashPath)
 
     useEffect(() => {
@@ -110,13 +115,18 @@ export function App() {
               : '--'
     const netLatencyTone = resolveLatencyTone(netRttMs)
     const hasMessage = messageText.trim().length > 0
+    const normalizedJoinRoomId = joinRoomIdInput.trim()
+    const canJoinRoom = normalizedJoinRoomId.length > 0
+    const isRoomNotFoundError =
+        rtc.lastError?.code === 'ROOM_NOT_FOUND' ||
+        /room not found|no such document/i.test(rtc.lastError?.message ?? '')
     const orderedLog = useMemo(() => [...rtc.operationLog].reverse(), [rtc.operationLog])
     const visibleLog = useMemo(() => {
-        const filtered = onlyChatMessages
+        const filtered = hideConnectionMessages
             ? orderedLog.filter((entry) => isChannelMessage(entry))
             : orderedLog
         return filtered.slice(-MAX_VISIBLE_LOG_ENTRIES)
-    }, [orderedLog, onlyChatMessages])
+    }, [orderedLog, hideConnectionMessages])
 
     const calleeUrl = useMemo(() => {
         if (!routeRoomId) return ''
@@ -164,18 +174,17 @@ export function App() {
     }, [routeRole, routeRoomId, rtc.attachAsCaller, rtc.attachAsCallee])
 
     useEffect(() => {
-        if (mode === 'caller' && routeRoomId) {
+        if (!isRoomNotFoundError) return
+        setRoomNotFoundModalOpen(true)
+    }, [isRoomNotFoundError])
+
+    useEffect(() => {
+        if (mode === 'caller' && routeRoomId && !channelReadyForMessages) {
             setQrModalOpen(true)
             return
         }
         setQrModalOpen(false)
-    }, [mode, routeRoomId])
-
-    useEffect(() => {
-        if (mode === 'caller' && channelReadyForMessages) {
-            setQrModalOpen(false)
-        }
-    }, [mode, channelReadyForMessages])
+    }, [mode, routeRoomId, channelReadyForMessages])
 
     useEffect(() => {
         return () => {
@@ -204,7 +213,7 @@ export function App() {
 
         if (isRelayRoute) {
             highDirectStreakRef.current = 0
-            showWarning('relay', 'Using TURN/relay. May increase latency even on local network.')
+            if (netWarning?.key === 'relay') setNetWarning(null)
             return
         }
 
@@ -221,7 +230,7 @@ export function App() {
         }
 
         highDirectStreakRef.current = 0
-    }, [isRelayRoute, netRttMs])
+    }, [isRelayRoute, netRttMs, netWarning?.key])
 
     useEffect(() => {
         if (!createPending || rtc.booting) return
@@ -283,6 +292,29 @@ export function App() {
         }
         prevOverallStatusRef.current = rtc.overallStatus
     }, [mode, rtc.overallStatus])
+
+    useEffect(() => {
+        if (!modeEffectBootRef.current) {
+            modeEffectBootRef.current = true
+            prevModeRef.current = mode
+            return
+        }
+
+        const previousMode = prevModeRef.current
+        prevModeRef.current = mode
+
+        if (mode === 'initial' && previousMode !== 'initial') {
+            setMessageText('')
+            setQrModalOpen(false)
+            setLeaveConfirmOpen(false)
+            setLeavePending(false)
+            setRemoveRoomOnLeave(true)
+            setNetWarning(null)
+            setConnectProgressRatio(0)
+            rtc.clearOperationLog()
+            void rtc.disconnect().catch(() => {})
+        }
+    }, [mode, rtc])
 
     const createTrackWidthPx = Number.isFinite(createProgressTrackWidthPx)
         ? createProgressTrackWidthPx
@@ -374,6 +406,14 @@ export function App() {
         }
     }
 
+    const joinRoom = () => {
+        if (!canJoinRoom) return
+        setJoinModalOpen(false)
+        setRoomNotFoundModalOpen(false)
+        autoRouteHandledRef.current = null
+        setHashPath(`/attach/callee/${encodeURIComponent(normalizedJoinRoomId)}`)
+    }
+
     const sendFast = async () => {
         const text = messageText.trim()
         if (!text) return
@@ -401,21 +441,102 @@ export function App() {
         setLeavePending(false)
     }
 
+    const backToMain = () => {
+        setRoomNotFoundModalOpen(false)
+        setJoinModalOpen(false)
+        setJoinRoomIdInput('')
+        autoRouteHandledRef.current = null
+        void rtc.disconnect().catch(() => {})
+        setHashPath('/')
+    }
+
+    const roomNotFoundModal =
+        roomNotFoundModalOpen && isRoomNotFoundError ? (
+            <div className="qrModalBackdrop" role="dialog" aria-modal="true">
+                <section className="appModal appModalError leaveModal">
+                    <div className="qrModalHeader">
+                        <h2 className="qrModalTitle">Room not found</h2>
+                        <button
+                            type="button"
+                            className="cs-btn close"
+                            aria-label="Close dialog"
+                            onClick={() => setRoomNotFoundModalOpen(false)}
+                        />
+                    </div>
+                    <p className="appModalMessage">
+                        The requested room does not exist or is already closed.
+                    </p>
+                    <menu className="leaveModalActions">
+                        <button type="button" className="cs-btn" onClick={backToMain}>
+                            Back to main
+                        </button>
+                        <button
+                            type="button"
+                            className="cs-btn"
+                            onClick={() => setRoomNotFoundModalOpen(false)}
+                        >
+                            Close
+                        </button>
+                    </menu>
+                </section>
+            </div>
+        ) : null
+
     if (mode === 'initial') {
-        const statusText = createPending
-            ? 'Creating room...'
-            : rtc.overallStatus === 'connecting'
-              ? 'Establishing signaling and transport...'
-              : rtc.lastError
-                ? `${rtc.lastError.code ? `${rtc.lastError.code}: ` : ''}${rtc.lastError.message}`
-                : 'Ready to create room.'
         const modalStatusText =
             typeof rtc.overallStatusText === 'string' && rtc.overallStatusText.trim().length > 0
                 ? rtc.overallStatusText
-                : statusText
+                : 'Preparing room...'
 
         return (
             <main className="demoShell demoShellInitial">
+                {roomNotFoundModal}
+                {joinModalOpen && (
+                    <div className="qrModalBackdrop" role="dialog" aria-modal="true">
+                        <section className="appModal leaveModal">
+                            <div className="qrModalHeader">
+                                <h2 className="qrModalTitle">Join Room</h2>
+                                <button
+                                    type="button"
+                                    className="cs-btn close"
+                                    aria-label="Close dialog"
+                                    onClick={() => setJoinModalOpen(false)}
+                                />
+                            </div>
+                            <p className="appModalMessage">Enter Room ID to attach as CALLEE.</p>
+                            <input
+                                id="join-room-id"
+                                className="roomInput cs-input"
+                                value={joinRoomIdInput}
+                                onChange={(e) => setJoinRoomIdInput(e.target.value)}
+                                placeholder="Room ID"
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        e.preventDefault()
+                                        joinRoom()
+                                    }
+                                }}
+                            />
+                            <menu className="leaveModalActions">
+                                <button
+                                    type="button"
+                                    className="cs-btn"
+                                    onClick={() => setJoinModalOpen(false)}
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    className="cs-btn"
+                                    onClick={joinRoom}
+                                    disabled={!canJoinRoom}
+                                >
+                                    Join
+                                </button>
+                            </menu>
+                        </section>
+                    </div>
+                )}
                 {createPending && !rtc.booting && (
                     <div className="appModalBackdrop" aria-live="polite">
                         <section className="appModal">
@@ -467,8 +588,14 @@ export function App() {
                     >
                         {createPending ? 'Creating...' : 'Create Room'}
                     </button>
-                    <hr className="cs-hr" />
-                    <p className={`statusLine status-${rtc.overallStatus}`}>{statusText}</p>
+                    <button
+                        type="button"
+                        className="cs-btn"
+                        onClick={() => setJoinModalOpen(true)}
+                        disabled={createPending}
+                    >
+                        Join Room
+                    </button>
                     <p className="credits">
                         UI skin powered by{' '}
                         <a
@@ -487,6 +614,7 @@ export function App() {
 
     return (
         <main className="demoShell demoShellChat">
+            {roomNotFoundModal}
             {leaveConfirmOpen && (
                 <div className="qrModalBackdrop" role="dialog" aria-modal="true">
                     <section className="appModal leaveModal">
@@ -548,6 +676,19 @@ export function App() {
                                 aria-label="Hide QR dialog"
                                 onClick={() => setQrModalOpen(false)}
                             />
+                        </div>
+                        <div className="roomRow qrRoomRow">
+                            <label htmlFor="qr-room-id" className="roomLabel">
+                                Room ID
+                            </label>
+                            <div className="roomRowMain">
+                                <input
+                                    id="qr-room-id"
+                                    className="roomInput cs-input"
+                                    readOnly
+                                    value={routeRoomId}
+                                />
+                            </div>
                         </div>
                         <section className="qrContent">
                             {calleeQrDataUrl ? (
@@ -638,14 +779,14 @@ export function App() {
                 <section className="chatCard">
                     <div className="chatHeader">
                         <div className="chatTitle">Operation Log</div>
-                        <label className="logFilter cs-checkbox" htmlFor="only-chat-messages">
+                        <label className="logFilter cs-checkbox" htmlFor="hide-connection-messages">
                             <input
-                                id="only-chat-messages"
+                                id="hide-connection-messages"
                                 type="checkbox"
-                                checked={onlyChatMessages}
-                                onChange={(e) => setOnlyChatMessages(e.target.checked)}
+                                checked={hideConnectionMessages}
+                                onChange={(e) => setHideConnectionMessages(e.target.checked)}
                             />
-                            <span className="cs-checkbox__label">Only chat messages</span>
+                            <span className="cs-checkbox__label">Hide connection messages</span>
                         </label>
                     </div>
                     <ul className="logList">

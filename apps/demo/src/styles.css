@@ -106,7 +106,7 @@ body {
 
 .screenHeaderActions {
     display: inline-flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
 }
 
@@ -346,6 +346,10 @@ body {
     margin: 0;
     font-size: 14px;
     color: var(--secondary-text);
+}
+
+.qrRoomRow {
+    margin-bottom: 8px;
 }
 
 .qrContent {
