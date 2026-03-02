@@ -103,7 +103,9 @@ const selectPair = (
     )
     if (nominatedSucceeded) return { pair: nominatedSucceeded, selectionMethod: 'nominated' }
 
-    const selectedSucceeded = pairs.find((pair) => pair.selected === true && pair.state === 'succeeded')
+    const selectedSucceeded = pairs.find(
+        (pair) => pair.selected === true && pair.state === 'succeeded',
+    )
     if (selectedSucceeded) return { pair: selectedSucceeded, selectionMethod: 'selected' }
 
     const succeeded = pairs.find((pair) => pair.state === 'succeeded')
@@ -151,8 +153,6 @@ export const extractSelectedIcePath = (stats: RTCStatsReport): IcePathSelection 
         },
         selectionMethod: selection.selectionMethod,
         diagnostics:
-            diagnostics.length > 0
-                ? { reason: diagnostics.join('; ') }
-                : selection.diagnostics,
+            diagnostics.length > 0 ? { reason: diagnostics.join('; ') } : selection.diagnostics,
     }
 }

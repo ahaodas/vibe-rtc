@@ -1,7 +1,4 @@
-import {
-    extractSelectedIcePath,
-    type IcePathSelectionMethod,
-} from './icePath'
+import { extractSelectedIcePath, type IcePathSelectionMethod } from './icePath'
 
 const DEFAULT_INTERVAL_MS = 1000
 
