@@ -19,10 +19,15 @@ pnpm add @vibe-rtc/rtc-core
 
 Implement `SignalDB` from `src/types.tsx` with methods for:
 
-- room lifecycle: `createRoom`, `joinRoom`, `getRoom`, `endRoom`
+- room lifecycle: `createRoom`, `joinRoom(role?)`, `getRoom`, `endRoom`
 - SDP exchange: `getOffer`, `setOffer`, `clearOffer`, `setAnswer`, `clearAnswer`
 - ICE exchange: add/subscribe for caller/callee candidate streams
 - cleanup: `clearCallerCandidates`, `clearCalleeCandidates`
+
+For multi-tab safety, adapters should also expose room slot ownership in `RoomDoc.slots`:
+
+- `slots.caller.participantId/sessionId/...`
+- `slots.callee.participantId/sessionId/...`
 
 ## Quick Example
 
@@ -70,8 +75,18 @@ With `connectionStrategy: "LAN_FIRST"`:
 
 - Phase `LAN`: `RTCPeerConnection` starts with `iceServers: []` and only `typ host` candidates are sent/accepted.
 - Phase `STUN`: if not connected before `lanFirstTimeoutMs`, the current peer is closed and rebuilt with STUN enabled.
-- Signaling payload format is backward-compatible. Optional `pcGeneration` metadata is added to reduce stale message handling during rebuilds.
+- Signaling payload format is backward-compatible. Signaling messages include `sessionId` and stale messages from old sessions are ignored.
 - Debug snapshots (`onDebug`) include strategy phase, candidate counters by type (`host`/`srflx`/`relay`) and best-effort selected path inference.
+
+## Takeover / Session Isolation
+
+`rtc-core` supports "last tab wins" for the same role in the same room:
+
+- adapter marks each role slot with `participantId` + `sessionId`
+- any incoming offer/answer/candidate with foreign `sessionId` is ignored as stale
+- if current role slot owner (`participantId`) changes, active signaler stops and raises an error (`INVALID_STATE`, message includes `takeover detected`)
+
+This prevents old tabs from corrupting signaling state after takeover/reload.
 
 ## Error Handling
 

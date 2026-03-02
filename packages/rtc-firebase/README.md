@@ -30,6 +30,28 @@ const signalDb = new FBAdapter(db, auth)
 const rtc = new RTCSignaler('caller', signalDb)
 ```
 
+## Takeover Semantics (Same Role / Multi-Tab)
+
+`FBAdapter` implements role-slot takeover with "last join wins":
+
+- each browser tab has adapter-level `participantId`
+- on `joinRoom(id, role)` adapter writes/updates `rooms/{roomId}.slots[role]` with:
+  - `participantId`
+  - `sessionId` (new on takeover/join)
+  - `joinedAt`, `lastSeenAt`
+- signaling documents (`offer`, `answer`, ICE candidates) carry `sessionId`
+
+Room schema fragment:
+
+```ts
+slots: {
+  caller?: { participantId: string; sessionId: string; joinedAt: number; lastSeenAt: number } | null
+  callee?: { participantId: string; sessionId: string; joinedAt: number; lastSeenAt: number } | null
+}
+```
+
+This lets `rtc-core` ignore stale signaling from old tabs and detect slot takeover reliably.
+
 ## Environment Variables
 
 For `cfgFromProcessEnv` / `loadFirebaseConfig` (from `@vibe-rtc/rtc-firebase/node`) default prefix `VITE_`:

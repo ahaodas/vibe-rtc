@@ -72,6 +72,19 @@ await rtc.endRoom()
 - `messageSeqFast`, `messageSeqReliable`
 - `debugState` (from core signaler)
 
+## Takeover Behavior
+
+`rtc-react` watches room slot ownership (`rooms/{roomId}.slots`) and handles same-role takeover:
+
+- if another tab takes your role slot, provider disposes active session
+- `lastError` is set to `TAKEOVER_DETECTED`
+- signaling/data channels are closed and no auto-rejoin is performed
+
+Recommended UI flow:
+
+- show a modal like "This room was taken over in another tab"
+- after confirmation, navigate user back to your home/start screen
+
 ## Development
 
 ```bash
