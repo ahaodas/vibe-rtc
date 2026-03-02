@@ -121,7 +121,9 @@ body {
 }
 
 .latencyHud {
-    min-width: 130px;
+    width: 148px;
+    min-width: 148px;
+    max-width: 148px;
     padding: 4px 8px;
     border: 1px solid var(--border-light);
     box-shadow: 1px 1px 0 var(--border-dark);
