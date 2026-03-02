@@ -104,8 +104,15 @@ function toOverallStatusText(state: VibeRTCState, overallStatus: VibeRTCOverallS
             : 'No active connection. Create or attach to a room.'
     }
     if (overallStatus === 'connected') {
+        const route = state.debugState?.netRtt?.route
+        if (route) {
+            const localType = route.localCandidateType ?? 'unknown'
+            const remoteType = route.remoteCandidateType ?? 'unknown'
+            const pathLabel = route.isRelay ? 'TURN/relay' : 'direct'
+            return `Connected via ${pathLabel} route (${localType} -> ${remoteType}).`
+        }
         const path = state.debugState?.selectedPath
-        if (path) return `Connected via ${path.toUpperCase()} candidate path.`
+        if (path && path !== 'unknown') return `Connected via ${path.toUpperCase()} candidate path.`
         return 'Connected. Fast and reliable channels are ready.'
     }
     const fromDebug = describeDebugEvent(state.debugState)
