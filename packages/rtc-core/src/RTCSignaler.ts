@@ -209,6 +209,7 @@ export class RTCSignaler {
     private connectedOrSubbed = false
 
     private readonly baseRtcConfig: RTCConfiguration
+    private readonly nativeIceServers: RTCIceServer[]
     private readonly stunOnlyIceServers: RTCIceServer[]
     private readonly turnOnlyIceServers: RTCIceServer[]
     private readonly fastLabel: string
@@ -326,6 +327,7 @@ export class RTCSignaler {
             opts.stunServers && opts.stunServers.length > 0 ? opts.stunServers : DEFAULT_ICE_SERVERS
         const effectiveIceServers =
             configuredIceServers.length > 0 ? configuredIceServers : fallbackIceServers
+        this.nativeIceServers = effectiveIceServers.map((server) => ({ ...server }))
         this.stunOnlyIceServers = extractStunOnlyIceServers(effectiveIceServers)
         this.turnOnlyIceServers = extractTurnOnlyIceServers(effectiveIceServers)
         this.icePhase = this.resolveInitialIcePhase()
@@ -1109,12 +1111,14 @@ export class RTCSignaler {
 
     private hasIcePhase(phase: IcePhase): boolean {
         if (phase === 'LAN') return true
-        if (phase === 'STUN' || phase === 'STUN_ONLY') return this.stunOnlyIceServers.length > 0
+        if (phase === 'STUN') return this.nativeIceServers.length > 0
+        if (phase === 'STUN_ONLY') return this.stunOnlyIceServers.length > 0
         return this.turnOnlyIceServers.length > 0
     }
 
     private resolveInitialIcePhase(): IcePhase {
         if (this.connectionStrategy === 'LAN_FIRST') return 'LAN'
+        if (this.connectionStrategy === 'BROWSER_NATIVE') return 'STUN'
         if (this.hasIcePhase('STUN_ONLY')) return 'STUN_ONLY'
         if (this.hasIcePhase('TURN_ENABLED')) return 'TURN_ENABLED'
         return 'STUN_ONLY'
@@ -1338,6 +1342,13 @@ export class RTCSignaler {
             return {
                 ...this.baseRtcConfig,
                 iceServers: [],
+            }
+        }
+        if (phase === 'STUN') {
+            return {
+                ...this.baseRtcConfig,
+                iceServers: this.nativeIceServers.map((server) => ({ ...server })),
+                iceTransportPolicy: this.baseRtcConfig.iceTransportPolicy ?? 'all',
             }
         }
         if (phase === 'TURN_ENABLED') {

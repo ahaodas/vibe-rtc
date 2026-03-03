@@ -60,9 +60,10 @@ await signaler.endRoom()
 - `debug`: enables internal console logs (`console.log`/`console.error`).  
   By default logs are enabled only in test runtime.
 - `waitReadyTimeoutMs`: default timeout for `waitReady()` and `reconnectHard()` if no timeout is passed explicitly.
-- `connectionStrategy`: `"LAN_FIRST"` (default) or `"DEFAULT"`.
+- `connectionStrategy`: `"LAN_FIRST"` (default), `"DEFAULT"` or `"BROWSER_NATIVE"`.
   - `"LAN_FIRST"` starts with host-only LAN candidates and no STUN/TURN, then falls back to STUN on timeout.
   - `"DEFAULT"` creates `RTCPeerConnection` with regular STUN behavior immediately.
+  - `"BROWSER_NATIVE"` passes full ICE config (`stun`/`turn`) to browser and lets WebRTC choose route natively.
 - `lanFirstTimeoutMs`: LAN-first fallback timeout in milliseconds (default `1800`).
 - `stunServers`: STUN servers used in fallback/default STUN mode.  
   Defaults to `[{ urls: "stun:stun.l.google.com:19302" }]`.
@@ -77,6 +78,14 @@ With `connectionStrategy: "LAN_FIRST"`:
 - Phase `STUN`: if not connected before `lanFirstTimeoutMs`, the current peer is closed and rebuilt with STUN enabled.
 - Signaling payload format is backward-compatible. Signaling messages include `sessionId` and stale messages from old sessions are ignored.
 - Debug snapshots (`onDebug`) include strategy phase, candidate counters by type (`host`/`srflx`/`relay`) and selected ICE route from `getStats()` (`transport.selectedCandidatePairId` / nominated fallback).
+
+## Browser-native Strategy
+
+With `connectionStrategy: "BROWSER_NATIVE"`:
+
+- `RTCPeerConnection` is created with the full configured `iceServers` list (no STUN/TURN split).
+- ICE candidates are not filtered by transport phase (only stale-session safety checks remain).
+- Path selection is delegated to browser ICE agent (native WebRTC behavior).
 
 ## Takeover / Session Isolation
 

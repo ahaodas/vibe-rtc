@@ -22,6 +22,8 @@ describe('connection strategy helpers', () => {
     it('allows srflx candidates outside LAN-only phase', () => {
         const srflxCandidate =
             'candidate:2 1 udp 1686052607 203.0.113.10 58023 typ srflx raddr 0.0.0.0 rport 0'
+        expect(shouldSendCandidate('STUN', srflxCandidate)).toBe(true)
+        expect(shouldAcceptCandidate('STUN', srflxCandidate)).toBe(true)
         expect(shouldSendCandidate('STUN_ONLY', srflxCandidate)).toBe(true)
         expect(shouldAcceptCandidate('STUN_ONLY', srflxCandidate)).toBe(true)
         expect(shouldSendCandidate('TURN_ENABLED', srflxCandidate)).toBe(true)

@@ -1,4 +1,4 @@
-export type ConnectionStrategy = 'LAN_FIRST' | 'DEFAULT'
+export type ConnectionStrategy = 'LAN_FIRST' | 'DEFAULT' | 'BROWSER_NATIVE'
 export type IcePhase = 'LAN' | 'STUN' | 'STUN_ONLY' | 'TURN_ENABLED'
 export type CandidateType = 'host' | 'srflx' | 'relay' | 'unknown'
 

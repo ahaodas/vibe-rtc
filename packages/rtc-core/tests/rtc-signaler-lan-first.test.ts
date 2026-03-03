@@ -174,6 +174,44 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         ])
     })
 
+    it('keeps native browser ICE behavior when BROWSER_NATIVE strategy is used', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+
+        const signaler = new RTCSignaler('caller', makeDb(), {
+            connectionStrategy: 'BROWSER_NATIVE',
+            lanFirstTimeoutMs: 20,
+            rtcConfiguration: {
+                iceServers: [
+                    { urls: ['stun:stun1.example.com:3478', 'turn:turn.example.com:3478'] },
+                    {
+                        urls: 'turns:turn.example.com:5349?transport=tcp',
+                        username: 'u',
+                        credential: 'c',
+                    },
+                ],
+            },
+        })
+        await signaler.joinRoom('room-browser-native')
+        await signaler.connect()
+
+        expect(FakeRTCPeerConnection.instances.length).toBe(1)
+        expect(FakeRTCPeerConnection.instances[0].config.iceServers).toEqual([
+            { urls: ['stun:stun1.example.com:3478', 'turn:turn.example.com:3478'] },
+            {
+                urls: 'turns:turn.example.com:5349?transport=tcp',
+                username: 'u',
+                credential: 'c',
+            },
+        ])
+
+        await vi.advanceTimersByTimeAsync(25)
+        expect(FakeRTCPeerConnection.instances.length).toBe(1)
+    })
+
     it('uses strict LAN -> STUN_ONLY -> TURN_ENABLED sequence when TURN servers are configured', async () => {
         vi.useFakeTimers()
         vi.stubGlobal(
