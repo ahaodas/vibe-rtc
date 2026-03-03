@@ -284,14 +284,17 @@ async function bootPair(
         return await caller.hostRoom()
     }, connectionStrategy)
 
-    await pCallee.evaluate(async ({ rid, strategy }) => {
-        ;(window as unknown as E2EWindow).callee = await (
-            window as unknown as E2EWindow
-        ).app.makeCallee({ connectionStrategy: strategy })
-        const callee = (window as unknown as E2EWindow).callee
-        if (!callee) throw new Error('callee role is missing after makeCallee')
-        await callee.joinRoom(rid)
-    }, { rid: roomId, strategy: connectionStrategy })
+    await pCallee.evaluate(
+        async ({ rid, strategy }) => {
+            ;(window as unknown as E2EWindow).callee = await (
+                window as unknown as E2EWindow
+            ).app.makeCallee({ connectionStrategy: strategy })
+            const callee = (window as unknown as E2EWindow).callee
+            if (!callee) throw new Error('callee role is missing after makeCallee')
+            await callee.joinRoom(rid)
+        },
+        { rid: roomId, strategy: connectionStrategy },
+    )
 
     await Promise.all([
         waitRoleReadyNoAssist(pCaller, 'caller'),

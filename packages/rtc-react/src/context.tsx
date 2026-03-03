@@ -239,10 +239,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     }, [signalServer, createSignalServer, pushOperation])
 
     const ensureSignaler = useCallback(
-        async (
-            role: 'caller' | 'callee',
-            opts?: VibeRTCSessionOptions,
-        ): Promise<RTCSignaler> => {
+        async (role: 'caller' | 'callee', opts?: VibeRTCSessionOptions): Promise<RTCSignaler> => {
             const db = await getSignalDB()
             const effectiveConnectionStrategy: ConnectionStrategy | undefined =
                 opts?.connectionStrategy ?? connectionStrategy
@@ -479,36 +476,39 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         [disposeSignaler, getSignalDB, stopRoomWatch, pushOperation],
     )
 
-    const createChannel = useCallback(async (opts?: VibeRTCSessionOptions) => {
-        await disposeSignaler()
-        dispatch({ type: 'RESET_MESSAGES' })
-        dispatch({ type: 'SET_LAST_ERROR', error: undefined })
-        dispatch({ type: 'SET_STATUS', status: 'connecting' })
-        pushOperation('signaling', 'Starting caller flow: create room', 'create-channel:start')
-        try {
-            const s = await ensureSignaler('caller', opts)
-            const id = await s.createRoom()
-            dispatch({ type: 'SET_ROOM', roomId: id })
-            pushOperation('signaling', `Room created: ${id}`, 'create-channel:room-created')
-            await s.connect()
-            pushOperation(
-                'webrtc',
-                'Caller started signaling/WebRTC connect',
-                'create-channel:connect',
-            )
-            await startRoomWatch(id)
-            return id
-        } catch (e) {
-            const err = normalizeError(e)
-            pushOperation(
-                'error',
-                `Caller flow failed: ${err.code ? `${err.code}: ` : ''}${err.message}`,
-                'create-channel:error',
-            )
-            dispatch({ type: 'SET_LAST_ERROR', error: err })
-            throw e
-        }
-    }, [disposeSignaler, ensureSignaler, startRoomWatch, pushOperation])
+    const createChannel = useCallback(
+        async (opts?: VibeRTCSessionOptions) => {
+            await disposeSignaler()
+            dispatch({ type: 'RESET_MESSAGES' })
+            dispatch({ type: 'SET_LAST_ERROR', error: undefined })
+            dispatch({ type: 'SET_STATUS', status: 'connecting' })
+            pushOperation('signaling', 'Starting caller flow: create room', 'create-channel:start')
+            try {
+                const s = await ensureSignaler('caller', opts)
+                const id = await s.createRoom()
+                dispatch({ type: 'SET_ROOM', roomId: id })
+                pushOperation('signaling', `Room created: ${id}`, 'create-channel:room-created')
+                await s.connect()
+                pushOperation(
+                    'webrtc',
+                    'Caller started signaling/WebRTC connect',
+                    'create-channel:connect',
+                )
+                await startRoomWatch(id)
+                return id
+            } catch (e) {
+                const err = normalizeError(e)
+                pushOperation(
+                    'error',
+                    `Caller flow failed: ${err.code ? `${err.code}: ` : ''}${err.message}`,
+                    'create-channel:error',
+                )
+                dispatch({ type: 'SET_LAST_ERROR', error: err })
+                throw e
+            }
+        },
+        [disposeSignaler, ensureSignaler, startRoomWatch, pushOperation],
+    )
 
     const joinChannel = useCallback(
         async (roomId: string, opts?: VibeRTCSessionOptions) => {
