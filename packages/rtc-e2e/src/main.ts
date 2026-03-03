@@ -50,6 +50,7 @@ async function make(role: Who) {
     const s = new RTCSignaler(role, signalDb, {
         debug: true,
         rtcConfiguration,
+        connectionStrategy: 'DEFAULT',
     })
 
     // Basic handlers so states are visible in console.

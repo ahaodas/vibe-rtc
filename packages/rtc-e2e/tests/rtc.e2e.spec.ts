@@ -53,34 +53,62 @@ async function waitAppReady(page: Page) {
     await page.waitForFunction(() => !!(window as unknown as E2EWindow).app)
 }
 
-async function waitRoleReadyNoAssist(page: Page, who: Who, timeoutMs = READY_TIMEOUT_MS) {
-    const startedAt = Date.now()
-    await page.evaluate(
-        async ({ who, timeoutMs }) => {
-            const obj = (window as unknown as E2EWindow)[who]
-            if (!obj) throw new Error(`Role object is missing: ${who}`)
-            await obj.waitReadyNoAssist(timeoutMs)
-        },
-        { who, timeoutMs },
+function isNavigationContextError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return (
+        message.includes('Execution context was destroyed') ||
+        message.includes('Cannot find context with specified id') ||
+        message.includes('Most likely because of a navigation')
     )
-    return Date.now() - startedAt
+}
+
+async function waitRoleReadyInternal(
+    page: Page,
+    who: Who,
+    timeoutMs: number,
+    noAssistOnly: boolean,
+) {
+    const startedAt = Date.now()
+    const deadlineAt = startedAt + timeoutMs
+    let lastNavigationError: unknown
+
+    while (Date.now() < deadlineAt) {
+        const remainingMs = Math.max(1, deadlineAt - Date.now())
+        try {
+            await page.evaluate(
+                async ({ who, timeoutMs, noAssistOnly }) => {
+                    const obj = (window as unknown as E2EWindow)[who]
+                    if (!obj) throw new Error(`Role object is missing: ${who}`)
+                    if (!noAssistOnly && typeof obj.waitReady === 'function') {
+                        await obj.waitReady(timeoutMs)
+                        return
+                    }
+                    await obj.waitReadyNoAssist(timeoutMs)
+                },
+                { who, timeoutMs: remainingMs, noAssistOnly },
+            )
+            return Date.now() - startedAt
+        } catch (error) {
+            if (!isNavigationContextError(error) || page.isClosed()) throw error
+            lastNavigationError = error
+            const waitAppForMs = Math.max(1, Math.min(remainingMs, 5_000))
+            await page.waitForFunction(() => !!(window as unknown as E2EWindow).app, undefined, {
+                timeout: waitAppForMs,
+            })
+            await page.waitForTimeout(120)
+        }
+    }
+
+    if (lastNavigationError instanceof Error) throw lastNavigationError
+    throw new Error(`waitRoleReady timeout: ${who}`)
+}
+
+async function waitRoleReadyNoAssist(page: Page, who: Who, timeoutMs = READY_TIMEOUT_MS) {
+    return await waitRoleReadyInternal(page, who, timeoutMs, true)
 }
 
 async function waitRoleReady(page: Page, who: Who, timeoutMs = READY_TIMEOUT_MS) {
-    const startedAt = Date.now()
-    await page.evaluate(
-        async ({ who, timeoutMs }) => {
-            const obj = (window as unknown as E2EWindow)[who]
-            if (!obj) throw new Error(`Role object is missing: ${who}`)
-            if (typeof obj.waitReady === 'function') {
-                await obj.waitReady(timeoutMs)
-                return
-            }
-            await obj.waitReadyNoAssist(timeoutMs)
-        },
-        { who, timeoutMs },
-    )
-    return Date.now() - startedAt
+    return await waitRoleReadyInternal(page, who, timeoutMs, false)
 }
 
 function isConnected(st: RoleState | null | undefined): boolean {
