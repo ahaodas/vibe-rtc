@@ -1,10 +1,12 @@
 import { expect, type Page, test } from '@playwright/test'
 
 type Who = 'caller' | 'callee'
+type ConnectionStrategy = 'DEFAULT' | 'BROWSER_NATIVE'
 const OTHER: Record<Who, Who> = { caller: 'callee', callee: 'caller' }
 
 const READY_TIMEOUT_MS = 15_000
 const RECOVERY_SLA_MS = 10_000
+const BROWSER_NATIVE_RECOVERY_SLA_MS = 15_000
 const TAKEOVER_READY_TIMEOUT_MS = 45_000
 
 type RoleState = {
@@ -28,8 +30,8 @@ type RoleApi = {
 }
 
 type AppApi = {
-    makeCaller: () => Promise<RoleApi>
-    makeCallee: () => Promise<RoleApi>
+    makeCaller: (opts?: { connectionStrategy?: ConnectionStrategy }) => Promise<RoleApi>
+    makeCallee: (opts?: { connectionStrategy?: ConnectionStrategy }) => Promise<RoleApi>
 }
 
 type E2EWindow = Window & {
@@ -163,16 +165,23 @@ async function assertPingStrict(from: Page, whoFrom: Who, to: Page, expectedText
         .toBe(true)
 }
 
-async function openRolePage(page: Page, baseURL: string, who: Who, roomId: string, tag: string) {
+async function openRolePage(
+    page: Page,
+    baseURL: string,
+    who: Who,
+    roomId: string,
+    tag: string,
+    connectionStrategy: ConnectionStrategy = 'DEFAULT',
+) {
     captureConsole(page, tag)
     await page.goto(`${baseURL}/e2e-rtc.html`)
     await waitAppReady(page)
     await page.evaluate(
-        async ({ who, roomId }) => {
+        async ({ who, roomId, connectionStrategy }) => {
             if (who === 'caller') {
                 ;(window as unknown as E2EWindow).caller = await (
                     window as unknown as E2EWindow
-                ).app.makeCaller()
+                ).app.makeCaller({ connectionStrategy })
                 const caller = (window as unknown as E2EWindow).caller
                 if (!caller) throw new Error('caller role is missing after makeCaller')
                 await caller.joinRoom(roomId)
@@ -180,12 +189,12 @@ async function openRolePage(page: Page, baseURL: string, who: Who, roomId: strin
             }
             ;(window as unknown as E2EWindow).callee = await (
                 window as unknown as E2EWindow
-            ).app.makeCallee()
+            ).app.makeCallee({ connectionStrategy })
             const callee = (window as unknown as E2EWindow).callee
             if (!callee) throw new Error('callee role is missing after makeCallee')
             await callee.joinRoom(roomId)
         },
-        { who, roomId },
+        { who, roomId, connectionStrategy },
     )
 }
 
@@ -253,7 +262,12 @@ async function assertRoleStaysDisconnected(page: Page, who: Who, observeMs = 4_0
     }
 }
 
-async function bootPair(pCaller: Page, pCallee: Page, baseURL: string) {
+async function bootPair(
+    pCaller: Page,
+    pCallee: Page,
+    baseURL: string,
+    connectionStrategy: ConnectionStrategy = 'DEFAULT',
+) {
     captureConsole(pCaller, 'caller')
     captureConsole(pCallee, 'callee')
 
@@ -261,23 +275,23 @@ async function bootPair(pCaller: Page, pCallee: Page, baseURL: string) {
     await pCallee.goto(`${baseURL}/e2e-rtc.html`)
     await Promise.all([waitAppReady(pCaller), waitAppReady(pCallee)])
 
-    const roomId = await pCaller.evaluate(async () => {
+    const roomId = await pCaller.evaluate(async (strategy) => {
         ;(window as unknown as E2EWindow).caller = await (
             window as unknown as E2EWindow
-        ).app.makeCaller()
+        ).app.makeCaller({ connectionStrategy: strategy })
         const caller = (window as unknown as E2EWindow).caller
         if (!caller) throw new Error('caller role is missing after makeCaller')
         return await caller.hostRoom()
-    })
+    }, connectionStrategy)
 
-    await pCallee.evaluate(async (rid) => {
+    await pCallee.evaluate(async ({ rid, strategy }) => {
         ;(window as unknown as E2EWindow).callee = await (
             window as unknown as E2EWindow
-        ).app.makeCallee()
+        ).app.makeCallee({ connectionStrategy: strategy })
         const callee = (window as unknown as E2EWindow).callee
         if (!callee) throw new Error('callee role is missing after makeCallee')
         await callee.joinRoom(rid)
-    }, roomId)
+    }, { rid: roomId, strategy: connectionStrategy })
 
     await Promise.all([
         waitRoleReadyNoAssist(pCaller, 'caller'),
@@ -292,16 +306,21 @@ async function bootPair(pCaller: Page, pCallee: Page, baseURL: string) {
     return roomId
 }
 
-async function reloadRoleStrict(page: Page, who: Who, roomId: string) {
+async function reloadRoleStrict(
+    page: Page,
+    who: Who,
+    roomId: string,
+    connectionStrategy: ConnectionStrategy = 'DEFAULT',
+) {
     await page.reload()
     await waitAppReady(page)
 
     await page.evaluate(
-        async ({ who, roomId }) => {
+        async ({ who, roomId, connectionStrategy }) => {
             if (who === 'caller') {
                 ;(window as unknown as E2EWindow).caller = await (
                     window as unknown as E2EWindow
-                ).app.makeCaller()
+                ).app.makeCaller({ connectionStrategy })
                 const caller = (window as unknown as E2EWindow).caller
                 if (!caller) throw new Error('caller role is missing after reload')
                 await caller.joinRoom(roomId)
@@ -309,27 +328,32 @@ async function reloadRoleStrict(page: Page, who: Who, roomId: string) {
             }
             ;(window as unknown as E2EWindow).callee = await (
                 window as unknown as E2EWindow
-            ).app.makeCallee()
+            ).app.makeCallee({ connectionStrategy })
             const callee = (window as unknown as E2EWindow).callee
             if (!callee) throw new Error('callee role is missing after reload')
             await callee.joinRoom(roomId)
         },
-        { who, roomId },
+        { who, roomId, connectionStrategy },
     )
 
     return await waitRoleReadyNoAssist(page, who)
 }
 
-async function reloadRoleNoWait(page: Page, who: Who, roomId: string) {
+async function reloadRoleNoWait(
+    page: Page,
+    who: Who,
+    roomId: string,
+    connectionStrategy: ConnectionStrategy = 'DEFAULT',
+) {
     await page.reload()
     await waitAppReady(page)
 
     await page.evaluate(
-        async ({ who, roomId }) => {
+        async ({ who, roomId, connectionStrategy }) => {
             if (who === 'caller') {
                 ;(window as unknown as E2EWindow).caller = await (
                     window as unknown as E2EWindow
-                ).app.makeCaller()
+                ).app.makeCaller({ connectionStrategy })
                 const caller = (window as unknown as E2EWindow).caller
                 if (!caller) throw new Error('caller role is missing after reload')
                 await caller.joinRoom(roomId)
@@ -337,12 +361,12 @@ async function reloadRoleNoWait(page: Page, who: Who, roomId: string) {
             }
             ;(window as unknown as E2EWindow).callee = await (
                 window as unknown as E2EWindow
-            ).app.makeCallee()
+            ).app.makeCallee({ connectionStrategy })
             const callee = (window as unknown as E2EWindow).callee
             if (!callee) throw new Error('callee role is missing after reload')
             await callee.joinRoom(roomId)
         },
-        { who, roomId },
+        { who, roomId, connectionStrategy },
     )
 }
 
@@ -501,6 +525,57 @@ test.describe('reload recovery (strict no-assist)', () => {
             await assertPingStrict(pCaller, 'caller', pCallee, `after-simultaneous-${i}-caller`)
             await assertPingStrict(pCallee, 'callee', pCaller, `after-simultaneous-${i}-callee`)
         }
+    })
+})
+
+test.describe('browser-native strategy recovery (strict no-assist)', () => {
+    test.setTimeout(120_000)
+
+    let pCaller: Page
+    let pCallee: Page
+    let roomId: string
+
+    test.beforeEach(async ({ context, baseURL }) => {
+        pCaller = await context.newPage()
+        pCallee = await context.newPage()
+        if (!baseURL) {
+            throw new Error('Playwright baseURL is required for rtc e2e tests')
+        }
+        roomId = await bootPair(pCaller, pCallee, baseURL, 'BROWSER_NATIVE')
+    })
+
+    test.afterEach(async () => {
+        await cleanupPair(pCaller, pCallee)
+    })
+
+    test('caller reload recovers and message flow survives in BROWSER_NATIVE mode', async () => {
+        const elapsedMs = await reloadRoleStrict(pCaller, 'caller', roomId, 'BROWSER_NATIVE')
+        expect(
+            elapsedMs,
+            `caller BROWSER_NATIVE recovery must be <= ${BROWSER_NATIVE_RECOVERY_SLA_MS}ms`,
+        ).toBeLessThanOrEqual(BROWSER_NATIVE_RECOVERY_SLA_MS)
+
+        await waitRoleReadyNoAssist(pCallee, 'callee')
+        await assertStateConnected(pCaller, 'caller')
+        await assertStateConnected(pCallee, 'callee')
+
+        await assertPingStrict(pCaller, 'caller', pCallee, 'native-after-caller-reload')
+        await assertPingStrict(pCallee, 'callee', pCaller, 'native-pong-after-caller-reload')
+    })
+
+    test('callee reload recovers and message flow survives in BROWSER_NATIVE mode', async () => {
+        const elapsedMs = await reloadRoleStrict(pCallee, 'callee', roomId, 'BROWSER_NATIVE')
+        expect(
+            elapsedMs,
+            `callee BROWSER_NATIVE recovery must be <= ${BROWSER_NATIVE_RECOVERY_SLA_MS}ms`,
+        ).toBeLessThanOrEqual(BROWSER_NATIVE_RECOVERY_SLA_MS)
+
+        await waitRoleReadyNoAssist(pCaller, 'caller')
+        await assertStateConnected(pCaller, 'caller')
+        await assertStateConnected(pCallee, 'callee')
+
+        await assertPingStrict(pCaller, 'caller', pCallee, 'native-after-callee-reload')
+        await assertPingStrict(pCallee, 'callee', pCaller, 'native-pong-after-callee-reload')
     })
 })
 

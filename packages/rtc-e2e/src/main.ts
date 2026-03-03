@@ -1,4 +1,4 @@
-import { RTCSignaler } from '@vibe-rtc/rtc-core'
+import { type ConnectionStrategy, RTCSignaler } from '@vibe-rtc/rtc-core'
 import { ensureFirebase, FBAdapter } from '@vibe-rtc/rtc-firebase'
 
 const firebaseConfig = {
@@ -11,9 +11,16 @@ const firebaseConfig = {
 }
 
 type Who = 'caller' | 'callee'
+type MakeOptions = {
+    connectionStrategy?: ConnectionStrategy
+}
 type AppApi = {
-    makeCaller: () => Promise<ReturnType<typeof make> extends Promise<infer T> ? T : never>
-    makeCallee: () => Promise<ReturnType<typeof make> extends Promise<infer T> ? T : never>
+    makeCaller: (
+        opts?: MakeOptions,
+    ) => Promise<ReturnType<typeof make> extends Promise<infer T> ? T : never>
+    makeCallee: (
+        opts?: MakeOptions,
+    ) => Promise<ReturnType<typeof make> extends Promise<infer T> ? T : never>
 }
 
 declare global {
@@ -42,15 +49,16 @@ function makeLogger(prefix: string) {
     }
 }
 
-async function make(role: Who) {
+async function make(role: Who, opts: MakeOptions = {}) {
     const { db, auth } = await ensureFirebase(firebaseConfig)
     const signalDb = new FBAdapter(db, auth)
+    const connectionStrategy = opts.connectionStrategy ?? 'DEFAULT'
 
     const log = makeLogger(role)
     const s = new RTCSignaler(role, signalDb, {
         debug: true,
         rtcConfiguration,
-        connectionStrategy: 'DEFAULT',
+        connectionStrategy,
     })
 
     // Basic handlers so states are visible in console.
@@ -113,6 +121,6 @@ async function make(role: Who) {
 }
 
 window.app = {
-    makeCaller: () => make('caller'),
-    makeCallee: () => make('callee'),
+    makeCaller: (opts) => make('caller', opts),
+    makeCallee: (opts) => make('callee', opts),
 }

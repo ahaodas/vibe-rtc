@@ -12,6 +12,7 @@ This package is internal and not published.
 - repeated reloads on same side
 - message flow survival after reconnect
 - SLA-style recovery timing checks
+- dedicated recovery branch for `connectionStrategy: "BROWSER_NATIVE"`
 
 ## Run Tests
 
@@ -37,6 +38,8 @@ The harness expects Firebase Vite env variables:
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 
 STUN servers for E2E are configured directly in `src/main.ts` via `rtcConfiguration`.
+The harness also supports strategy override per role factory call
+(`makeCaller` / `makeCallee`) and is used by tests to run both `DEFAULT` and `BROWSER_NATIVE`.
 
 ## Notes
 
