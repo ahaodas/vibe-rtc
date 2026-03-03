@@ -1,4 +1,9 @@
-import { type DebugState, RTCSignaler, type SignalDB } from '@vibe-rtc/rtc-core'
+import {
+    type ConnectionStrategy,
+    type DebugState,
+    RTCSignaler,
+    type SignalDB,
+} from '@vibe-rtc/rtc-core'
 import type { PropsWithChildren } from 'react'
 import {
     createContext,
@@ -18,6 +23,7 @@ import type {
     VibeRTCOperationScope,
     VibeRTCOverallStatus,
     VibeRTCProviderProps,
+    VibeRTCSessionOptions,
     VibeRTCState,
 } from './types'
 
@@ -233,12 +239,21 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     }, [signalServer, createSignalServer, pushOperation])
 
     const ensureSignaler = useCallback(
-        async (role: 'caller' | 'callee'): Promise<RTCSignaler> => {
+        async (
+            role: 'caller' | 'callee',
+            opts?: VibeRTCSessionOptions,
+        ): Promise<RTCSignaler> => {
             const db = await getSignalDB()
-            pushOperation('system', `Creating RTCSignaler for role=${role}`, 'signaler:create')
+            const effectiveConnectionStrategy: ConnectionStrategy | undefined =
+                opts?.connectionStrategy ?? connectionStrategy
+            pushOperation(
+                'system',
+                `Creating RTCSignaler for role=${role}${effectiveConnectionStrategy ? ` strategy=${effectiveConnectionStrategy}` : ''}`,
+                'signaler:create',
+            )
             const s = new RTCSignaler(role, db, {
                 rtcConfiguration,
-                connectionStrategy,
+                connectionStrategy: effectiveConnectionStrategy,
                 lanFirstTimeoutMs,
                 pingIntervalMs,
                 pingWindowSize,
@@ -464,14 +479,14 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         [disposeSignaler, getSignalDB, stopRoomWatch, pushOperation],
     )
 
-    const createChannel = useCallback(async () => {
+    const createChannel = useCallback(async (opts?: VibeRTCSessionOptions) => {
         await disposeSignaler()
         dispatch({ type: 'RESET_MESSAGES' })
         dispatch({ type: 'SET_LAST_ERROR', error: undefined })
         dispatch({ type: 'SET_STATUS', status: 'connecting' })
         pushOperation('signaling', 'Starting caller flow: create room', 'create-channel:start')
         try {
-            const s = await ensureSignaler('caller')
+            const s = await ensureSignaler('caller', opts)
             const id = await s.createRoom()
             dispatch({ type: 'SET_ROOM', roomId: id })
             pushOperation('signaling', `Room created: ${id}`, 'create-channel:room-created')
@@ -496,7 +511,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     }, [disposeSignaler, ensureSignaler, startRoomWatch, pushOperation])
 
     const joinChannel = useCallback(
-        async (roomId: string) => {
+        async (roomId: string, opts?: VibeRTCSessionOptions) => {
             if (!roomId) throw new Error('[rtc-react] joinChannel(roomId) requires roomId')
             await disposeSignaler()
             dispatch({ type: 'RESET_MESSAGES' })
@@ -508,7 +523,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                 'join-channel:start',
             )
             try {
-                const s = await ensureSignaler('callee')
+                const s = await ensureSignaler('callee', opts)
                 await s.joinRoom(roomId)
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()
@@ -533,7 +548,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     )
 
     const attachAsCaller = useCallback(
-        async (roomId: string) => {
+        async (roomId: string, opts?: VibeRTCSessionOptions) => {
             if (!roomId) throw new Error('[rtc-react] attachAsCaller(roomId) requires roomId')
             await disposeSignaler()
             dispatch({ type: 'RESET_MESSAGES' })
@@ -541,7 +556,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             dispatch({ type: 'SET_STATUS', status: 'connecting' })
             pushOperation('signaling', `Attach as caller to room ${roomId}`, 'attach-caller:start')
             try {
-                const s = await ensureSignaler('caller')
+                const s = await ensureSignaler('caller', opts)
                 await s.joinRoom(roomId)
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()
@@ -563,7 +578,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     )
 
     const attachAsCallee = useCallback(
-        async (roomId: string) => {
+        async (roomId: string, opts?: VibeRTCSessionOptions) => {
             if (!roomId) throw new Error('[rtc-react] attachAsCallee(roomId) requires roomId')
             await disposeSignaler()
             dispatch({ type: 'RESET_MESSAGES' })
@@ -571,7 +586,7 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
             dispatch({ type: 'SET_STATUS', status: 'connecting' })
             pushOperation('signaling', `Attach as callee to room ${roomId}`, 'attach-callee:start')
             try {
-                const s = await ensureSignaler('callee')
+                const s = await ensureSignaler('callee', opts)
                 await s.joinRoom(roomId)
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()
@@ -592,7 +607,10 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
     )
 
     const attachAuto = useCallback(
-        async (roomId: string, opts?: { allowTakeOver?: boolean; staleMs?: number }) => {
+        async (
+            roomId: string,
+            opts?: { allowTakeOver?: boolean; staleMs?: number } & VibeRTCSessionOptions,
+        ) => {
             if (!roomId) throw new Error('[rtc-react] attachAuto(roomId) requires roomId')
             const staleMs = opts?.staleMs ?? 60_000
 
@@ -640,7 +658,9 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
 
                 if (!role) throw new Error('Room already occupied by other UIDs')
 
-                const s = await ensureSignaler(role)
+                const s = await ensureSignaler(role, {
+                    connectionStrategy: opts?.connectionStrategy,
+                })
                 await s.joinRoom(roomId)
                 dispatch({ type: 'SET_ROOM', roomId })
                 await s.connect()

@@ -35,6 +35,8 @@ import { VibeRTCProvider } from '@vibe-rtc/rtc-react'
 
 `rtcConfiguration` is optional. If not provided, `rtc-core` default ICE servers are used.
 `connectionStrategy` is optional (`LAN_FIRST` by default in `rtc-core`).
+Available modes: `LAN_FIRST`, `DEFAULT`, `BROWSER_NATIVE`.
+You can set strategy globally on provider, or override it per `create/join/attach` call.
 
 ## Hook API
 
@@ -43,9 +45,15 @@ const rtc = useVibeRTC()
 
 await rtc.createChannel()          // caller flow
 await rtc.joinChannel(roomId)      // callee flow
+await rtc.createChannel({ connectionStrategy: 'BROWSER_NATIVE' })
+await rtc.joinChannel(roomId, { connectionStrategy: 'DEFAULT' })
 await rtc.attachAsCaller(roomId)
 await rtc.attachAsCallee(roomId)
-await rtc.attachAuto(roomId, { allowTakeOver: true, staleMs: 60_000 })
+await rtc.attachAuto(roomId, {
+  allowTakeOver: true,
+  staleMs: 60_000,
+  connectionStrategy: 'BROWSER_NATIVE',
+})
 
 await rtc.sendFast('ping')
 await rtc.sendReliable('pong')

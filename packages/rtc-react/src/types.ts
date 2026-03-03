@@ -33,6 +33,10 @@ export interface TimedMessage<T = unknown> {
     data: T
 }
 
+export interface VibeRTCSessionOptions {
+    connectionStrategy?: ConnectionStrategy
+}
+
 export interface VibeRTCState {
     status: VibeRTCStatus
     booting: boolean
@@ -53,9 +57,9 @@ export interface VibeRTCContextValue extends VibeRTCState {
     operationLog: VibeRTCOperationLogEntry[]
     clearOperationLog: () => void
     /** Create a room as caller; returns roomId and connects */
-    createChannel: () => Promise<string>
+    createChannel: (opts?: VibeRTCSessionOptions) => Promise<string>
     /** Join an existing room as callee and connect */
-    joinChannel: (roomId: string) => Promise<void>
+    joinChannel: (roomId: string, opts?: VibeRTCSessionOptions) => Promise<void>
     /** Soft disconnect while keeping the room */
     disconnect: () => Promise<void>
     /** Fully end the room (if you are initiator/have permissions) */
@@ -65,11 +69,11 @@ export interface VibeRTCContextValue extends VibeRTCState {
     sendReliable: (text: string) => Promise<void>
     reconnectSoft: () => Promise<void>
     reconnectHard: (opts?: { awaitReadyMs?: number }) => Promise<void>
-    attachAsCaller: (roomId: string) => Promise<void>
-    attachAsCallee: (roomId: string) => Promise<void>
+    attachAsCaller: (roomId: string, opts?: VibeRTCSessionOptions) => Promise<void>
+    attachAsCallee: (roomId: string, opts?: VibeRTCSessionOptions) => Promise<void>
     attachAuto(
         roomId: string,
-        opts?: { allowTakeOver?: boolean; staleMs?: number },
+        opts?: { allowTakeOver?: boolean; staleMs?: number } & VibeRTCSessionOptions,
     ): Promise<(() => void) | undefined>
 }
 
@@ -80,7 +84,7 @@ export interface VibeRTCProviderProps {
     createSignalServer?: () => Promise<SignalDB>
     /** RTC config for PeerConnection */
     rtcConfiguration?: RTCConfiguration
-    /** ICE connection strategy (`LAN_FIRST` by default in rtc-core) */
+    /** ICE connection strategy (`LAN_FIRST` by default in rtc-core). Supports `BROWSER_NATIVE` mode. */
     connectionStrategy?: ConnectionStrategy
     /** LAN-first timeout before STUN fallback, ms */
     lanFirstTimeoutMs?: number
