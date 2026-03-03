@@ -67,7 +67,19 @@ pnpm lint
 pnpm biome:fix:safe
 ```
 
-Commit messages must follow Conventional Commits (validated by commitlint hook):
+Before commit, package-level checks are run automatically by Husky `pre-commit`.
+You can run them manually when needed:
+
+```bash
+# All workspace packages/apps:
+# Biome check in each package, then unit tests where defined
+pnpm run precommit:packages
+
+# Or one package:
+pnpm --filter @vibe-rtc/rtc-core run precommit
+```
+
+Commit messages must follow Conventional Commits (validated by Husky `commit-msg`):
 
 ```text
 feat(rtc-react): add per-session connectionStrategy override
@@ -133,9 +145,17 @@ See also `RELEASING.md`.
 
 Husky hooks are configured:
 
-- `pre-commit`: Biome safe fixes for staged files.
+- `pre-commit`: Biome safe fixes for staged files, then package-level `precommit` checks.
 - `commit-msg`: Conventional Commit validation via commitlint.
 - `pre-push`: commitlint for pushed range + typecheck for changed projects.
+
+Manual equivalents:
+
+```bash
+pnpm run precommit:packages
+pnpm typecheck
+pnpm commitlint --from origin/master --to HEAD
+```
 
 ## Firebase Rules
 

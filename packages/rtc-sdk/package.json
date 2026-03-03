@@ -33,6 +33,7 @@
     "sideEffects": false,
     "scripts": {
         "build": "tsup src/index.ts src/core.ts src/react.ts src/firebase.ts --dts --format esm,cjs --clean",
+        "precommit": "pnpm exec biome check src",
         "test": "echo \"(no tests)\""
     },
     "dependencies": {

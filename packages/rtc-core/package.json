@@ -19,6 +19,7 @@
     "scripts": {
         "build": "tsup src/index.ts --dts --format esm,cjs",
         "dev": "tsup src/index.ts --dts --format esm,cjs --watch",
+        "precommit": "pnpm exec biome check src tests && pnpm run test",
         "test": "vitest run"
     },
     "dependencies": {

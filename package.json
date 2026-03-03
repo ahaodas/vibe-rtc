@@ -17,6 +17,7 @@
         "biome:fix:safe": "biome check --write ./packages ./apps",
         "dev:pkgs": "pnpm -w --parallel --filter @vibe-rtc/* run build:watch",
         "lint": "biome lint",
+        "precommit:packages": "pnpm -r --filter './packages/*' --filter './apps/*' run precommit",
         "typecheck": "bash -lc 'set -euo pipefail; for f in packages/*/tsconfig.json apps/*/tsconfig.json; do [ -f \"$f\" ] && pnpm exec tsc -p \"$f\" --noEmit; done'",
         "commitlint": "commitlint --config commitlint.config.cjs",
         "changeset": "changeset",
