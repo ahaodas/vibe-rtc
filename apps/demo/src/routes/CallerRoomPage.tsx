@@ -1,10 +1,10 @@
 import { useVibeRTC } from '@vibe-rtc/rtc-react'
-import * as React from 'react'
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
 
 export default function CallerRoomPage() {
     const { roomId } = useParams<{ roomId: string }>()
+    const [searchParams] = useSearchParams()
     const [messages, setMessages] = useState<string[]>([])
     const {
         status,
@@ -16,13 +16,19 @@ export default function CallerRoomPage() {
         lastFastMessage,
         lastReliableMessage,
     } = useVibeRTC()
+    const strategyMode = searchParams.get('strategy') === 'native' ? 'native' : 'default'
 
     useEffect(() => {
         if (!roomId) return
         let cancelled = false
         ;(async () => {
             try {
-                await attachAsCaller(roomId)
+                await attachAsCaller(
+                    roomId,
+                    strategyMode === 'native'
+                        ? ({ connectionStrategy: 'BROWSER_NATIVE' } as const)
+                        : undefined,
+                )
             } catch (e) {
                 console.error(e)
             }
@@ -33,7 +39,7 @@ export default function CallerRoomPage() {
         return () => {
             cancelled = true
         }
-    }, [roomId, attachAsCaller])
+    }, [roomId, attachAsCaller, strategyMode])
 
     useEffect(() => {
         setMessages((x) => [`Fast: ${JSON.stringify(lastFastMessage)}`, ...x])
@@ -42,7 +48,11 @@ export default function CallerRoomPage() {
         setMessages((x) => [`Reliable: ${JSON.stringify(lastReliableMessage)}`, ...x])
     }, [lastReliableMessage])
 
-    const calleeLink = roomId ? `/callee/${roomId}` : ''
+    const calleeLink = roomId
+        ? strategyMode === 'native'
+            ? `/callee/${roomId}?strategy=native`
+            : `/callee/${roomId}`
+        : ''
 
     return (
         <div style={{ padding: 16 }}>
@@ -56,16 +66,22 @@ export default function CallerRoomPage() {
             )}
             {status === 'connected' && (
                 <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                    <button onClick={() => sendFast('caller-fast')}>Send fast</button>
-                    <button onClick={() => sendReliable('caller-rel')}>Send reliable</button>
-                    <button onClick={() => endRoom()}>End room</button>
+                    <button type="button" onClick={() => sendFast('caller-fast')}>
+                        Send fast
+                    </button>
+                    <button type="button" onClick={() => sendReliable('caller-rel')}>
+                        Send reliable
+                    </button>
+                    <button type="button" onClick={() => endRoom()}>
+                        End room
+                    </button>
                 </div>
             )}
 
             <div style={{ marginTop: 12 }}>
                 Share this link with callee:&nbsp;
                 {roomId ? (
-                    <Link target={'_blank'} to={`/callee/${roomId}`}>
+                    <Link target={'_blank'} to={calleeLink}>
                         {calleeLink}
                     </Link>
                 ) : (
@@ -73,8 +89,8 @@ export default function CallerRoomPage() {
                 )}
             </div>
             <ul>
-                {messages.map((m, i) => (
-                    <li key={i}>{m}</li>
+                {messages.map((m) => (
+                    <li key={m}>{m}</li>
                 ))}
             </ul>
         </div>

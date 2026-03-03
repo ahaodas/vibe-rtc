@@ -31,6 +31,21 @@ const setHashPath = (path: string) => {
 }
 
 type ScreenMode = 'initial' | 'caller' | 'callee'
+type RouteStrategyMode = 'default' | 'native'
+
+function toRouteStrategyMode(value: string | null | undefined): RouteStrategyMode {
+    return value === 'native' ? 'native' : 'default'
+}
+
+function toAttachHashPath(
+    role: Exclude<ScreenMode, 'initial'>,
+    roomId: string,
+    strategy: RouteStrategyMode,
+): string {
+    const encodedRoomId = encodeURIComponent(roomId)
+    const basePath = `/attach/${role}/${encodedRoomId}`
+    return strategy === 'native' ? `${basePath}?strategy=native` : basePath
+}
 
 function isChannelMessage(entry: VibeRTCOperationLogEntry): boolean {
     return entry.event?.startsWith('message:') ?? false
@@ -84,7 +99,10 @@ export function App() {
         return () => window.removeEventListener('hashchange', onHashChange)
     }, [])
 
-    const match = hashPath.match(/\/attach\/(caller|callee)\/([^/]+)$/)
+    const [hashPathname, hashQuery = ''] = hashPath.split('?')
+    const hashParams = useMemo(() => new URLSearchParams(hashQuery), [hashQuery])
+    const routeStrategyMode = toRouteStrategyMode(hashParams.get('strategy'))
+    const match = hashPathname.match(/\/attach\/(caller|callee)\/([^/]+)$/)
     const routeRole = match?.[1] as 'caller' | 'callee' | undefined
     const routeRoomId = match?.[2] ? decodeURIComponent(match[2]) : ''
     const mode: ScreenMode = routeRole ?? 'initial'
@@ -143,8 +161,8 @@ export function App() {
 
     const calleeUrl = useMemo(() => {
         if (!routeRoomId) return ''
-        return `${window.location.origin}${toBasePath('/')}#/attach/callee/${encodeURIComponent(routeRoomId)}`
-    }, [routeRoomId])
+        return `${window.location.origin}${toBasePath('/')}#${toAttachHashPath('callee', routeRoomId, routeStrategyMode)}`
+    }, [routeRoomId, routeStrategyMode])
 
     useEffect(() => {
         let cancelled = false
@@ -175,16 +193,20 @@ export function App() {
 
     useEffect(() => {
         if (!routeRole || !routeRoomId) return
-        const key = `${routeRole}:${routeRoomId}`
+        const key = `${routeRole}:${routeRoomId}:${routeStrategyMode}`
         if (autoRouteHandledRef.current === key) return
         autoRouteHandledRef.current = key
+        const sessionOpts =
+            routeStrategyMode === 'native'
+                ? ({ connectionStrategy: 'BROWSER_NATIVE' } as const)
+                : undefined
 
         if (routeRole === 'caller') {
-            void rtc.attachAsCaller(routeRoomId)
+            void rtc.attachAsCaller(routeRoomId, sessionOpts)
         } else {
-            void rtc.attachAsCallee(routeRoomId)
+            void rtc.attachAsCallee(routeRoomId, sessionOpts)
         }
-    }, [routeRole, routeRoomId, rtc.attachAsCaller, rtc.attachAsCallee])
+    }, [routeRole, routeRoomId, routeStrategyMode, rtc.attachAsCaller, rtc.attachAsCallee])
 
     useEffect(() => {
         if (!isRoomNotFoundError) return
@@ -398,7 +420,7 @@ export function App() {
         ? connectProgressWidthPercent
         : 0
 
-    const createRoom = async () => {
+    const createRoom = async (strategyMode: RouteStrategyMode = 'default') => {
         setCreatePending(true)
         setCreateProgressRatio(0)
 
@@ -414,7 +436,10 @@ export function App() {
         }, CREATE_PROGRESS_IDLE_TICK_MS)
 
         try {
-            const roomId = await rtc.createChannel()
+            const roomId =
+                strategyMode === 'native'
+                    ? await rtc.createChannel({ connectionStrategy: 'BROWSER_NATIVE' })
+                    : await rtc.createChannel()
 
             await new Promise<void>((resolve) => {
                 const finishTimer = window.setInterval(() => {
@@ -431,8 +456,8 @@ export function App() {
                 }, CREATE_PROGRESS_FINISH_TICK_MS)
             })
 
-            setHashPath(`/attach/caller/${encodeURIComponent(roomId)}`)
-            autoRouteHandledRef.current = `caller:${roomId}`
+            setHashPath(toAttachHashPath('caller', roomId, strategyMode))
+            autoRouteHandledRef.current = `caller:${roomId}:${strategyMode}`
             setCreateProgressRatio(0)
         } finally {
             window.clearInterval(idleTimer)
@@ -623,7 +648,8 @@ export function App() {
                         <p className="initialInfoText">
                             How to use:
                             <br />
-                            1. Press <b>Create Room</b>.
+                            1. Press <b>Create Room</b> (LAN-first) or{' '}
+                            <b>Create Room (Native ICE)</b>.
                             <br />
                             2. Open the callee link/QR on a second device.
                             <br />
@@ -637,10 +663,18 @@ export function App() {
                     <button
                         type="button"
                         className="cs-btn"
-                        onClick={() => void createRoom()}
+                        onClick={() => void createRoom('default')}
                         disabled={createPending}
                     >
                         {createPending ? 'Creating...' : 'Create Room'}
+                    </button>
+                    <button
+                        type="button"
+                        className="cs-btn"
+                        onClick={() => void createRoom('native')}
+                        disabled={createPending}
+                    >
+                        {createPending ? 'Creating...' : 'Create Room (Native ICE)'}
                     </button>
                     <button
                         type="button"
