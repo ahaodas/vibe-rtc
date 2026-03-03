@@ -5,6 +5,7 @@ import { defineConfig } from 'vite'
 export default defineConfig({
     base: process.env.VITE_BASE_PATH ?? '/',
     appType: 'spa',
+    envPrefix: ['VITE_', 'FIRESTORE_EMULATOR_HOST', 'FIREBASE_AUTH_EMULATOR_HOST'],
     plugins: [react()],
     server: { host: true, port: 5173 },
     build: { sourcemap: true },

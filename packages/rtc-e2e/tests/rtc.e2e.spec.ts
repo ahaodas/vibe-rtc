@@ -5,7 +5,12 @@ type ConnectionStrategy = 'DEFAULT' | 'BROWSER_NATIVE'
 const OTHER: Record<Who, Who> = { caller: 'callee', callee: 'caller' }
 
 const READY_TIMEOUT_MS = 15_000
-const RECOVERY_SLA_MS = 10_000
+const USING_FIREBASE_EMULATOR =
+    Boolean(process.env.FIRESTORE_EMULATOR_HOST) ||
+    Boolean(process.env.FIREBASE_AUTH_EMULATOR_HOST) ||
+    Boolean(process.env.VITE_FIRESTORE_EMULATOR_HOST) ||
+    Boolean(process.env.VITE_FIREBASE_AUTH_EMULATOR_HOST)
+const RECOVERY_SLA_MS = USING_FIREBASE_EMULATOR ? 12_000 : 10_000
 const BROWSER_NATIVE_RECOVERY_SLA_MS = 15_000
 const TAKEOVER_READY_TIMEOUT_MS = 45_000
 

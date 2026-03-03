@@ -171,6 +171,31 @@ Deploy rules:
 pnpm --filter @vibe-rtc/rtc-firebase run rules:deploy
 ```
 
+### Local Emulator + Rules Tests
+
+Root-level Firebase emulator config lives in [firebase.json](./firebase.json) and points to:
+
+- [firestore.rules](./packages/rtc-firebase/firestore.rules)
+- [firestore.indexes.json](./packages/rtc-firebase/firestore.indexes.json)
+
+Commands:
+
+```bash
+# Start Emulator Suite (Firestore + Auth + Emulator UI)
+pnpm emulators
+
+# Run Firestore rules tests (expects FIRESTORE_EMULATOR_HOST to be available)
+pnpm test:rules
+
+# Start firestore emulator and run rules tests in one command
+pnpm test:rules:emu
+
+# Run Playwright harness against emulators (no real Firebase project)
+pnpm test:e2e:emu
+```
+
+Emulator UI is available at `http://127.0.0.1:4000` and can be used to inspect reads/writes and rule denials while running tests.
+
 CI deploy is available via `.github/workflows/firestore-rules.yml`.
 Set:
 - Repository variable `FIREBASE_PROJECT_ID`

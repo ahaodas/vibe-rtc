@@ -3,6 +3,7 @@ import { defineConfig } from 'vite'
 
 export default defineConfig({
     root: './src',
+    envPrefix: ['VITE_', 'FIRESTORE_EMULATOR_HOST', 'FIREBASE_AUTH_EMULATOR_HOST'],
     build: {
         outDir: '../dist',
         emptyOutDir: true,

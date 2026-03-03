@@ -20,6 +20,8 @@ const WARNING_STICKY_MS = 8000
 const WARNING_COOLDOWN_MS = 15000
 const HIGH_DIRECT_NET_RTT_MS = 120
 const HIGH_DIRECT_NET_RTT_STREAK = 5
+const SECURITY_EVENT_ROOM_OCCUPIED = 'vibe:security-room-occupied'
+const SECURITY_EVENT_TAKEN_OVER = 'vibe:security-taken-over'
 const readHashPath = () => {
     const raw = window.location.hash.replace(/^#/, '')
     if (!raw) return '/'
@@ -69,7 +71,9 @@ export function App() {
     const [joinModalOpen, setJoinModalOpen] = useState(false)
     const [joinRoomIdInput, setJoinRoomIdInput] = useState('')
     const [roomNotFoundModalOpen, setRoomNotFoundModalOpen] = useState(false)
+    const [roomOccupiedModalOpen, setRoomOccupiedModalOpen] = useState(false)
     const [takeoverModalOpen, setTakeoverModalOpen] = useState(false)
+    const [securityTakeoverDetected, setSecurityTakeoverDetected] = useState(false)
     const [createProgressRatio, setCreateProgressRatio] = useState(0)
     const [createProgressTrackWidthPx, setCreateProgressTrackWidthPx] = useState(0)
     const [connectProgressRatio, setConnectProgressRatio] = useState(0)
@@ -97,6 +101,20 @@ export function App() {
         const onHashChange = () => setHashPathState(readHashPath())
         window.addEventListener('hashchange', onHashChange)
         return () => window.removeEventListener('hashchange', onHashChange)
+    }, [])
+
+    useEffect(() => {
+        const onRoomOccupied = () => setRoomOccupiedModalOpen(true)
+        const onTakenOver = () => {
+            setSecurityTakeoverDetected(true)
+            setTakeoverModalOpen(true)
+        }
+        window.addEventListener(SECURITY_EVENT_ROOM_OCCUPIED, onRoomOccupied)
+        window.addEventListener(SECURITY_EVENT_TAKEN_OVER, onTakenOver)
+        return () => {
+            window.removeEventListener(SECURITY_EVENT_ROOM_OCCUPIED, onRoomOccupied)
+            window.removeEventListener(SECURITY_EVENT_TAKEN_OVER, onTakenOver)
+        }
     }, [])
 
     const [hashPathname, hashQuery = ''] = hashPath.split('?')
@@ -217,6 +235,7 @@ export function App() {
         if (mode === 'initial') return
         if (!isTakeoverError) return
         setTakeoverModalOpen(true)
+        setSecurityTakeoverDetected(false)
     }, [mode, isTakeoverError])
 
     useEffect(() => {
@@ -352,7 +371,9 @@ export function App() {
             setMessageText('')
             setQrModalOpen(false)
             setLeaveConfirmOpen(false)
+            setRoomOccupiedModalOpen(false)
             setTakeoverModalOpen(false)
+            setSecurityTakeoverDetected(false)
             setLeavePending(false)
             setRemoveRoomOnLeave(true)
             setNetWarning(null)
@@ -469,6 +490,7 @@ export function App() {
         if (!canJoinRoom) return
         setJoinModalOpen(false)
         setRoomNotFoundModalOpen(false)
+        setRoomOccupiedModalOpen(false)
         autoRouteHandledRef.current = null
         setHashPath(`/attach/callee/${encodeURIComponent(normalizedJoinRoomId)}`)
     }
@@ -502,7 +524,9 @@ export function App() {
 
     const backToMain = () => {
         setRoomNotFoundModalOpen(false)
+        setRoomOccupiedModalOpen(false)
         setTakeoverModalOpen(false)
+        setSecurityTakeoverDetected(false)
         setJoinModalOpen(false)
         setJoinRoomIdInput('')
         autoRouteHandledRef.current = null
@@ -542,8 +566,39 @@ export function App() {
             </div>
         ) : null
 
+    const roomOccupiedModal = roomOccupiedModalOpen ? (
+        <div className="qrModalBackdrop" role="dialog" aria-modal="true">
+            <section className="appModal appModalError leaveModal">
+                <div className="qrModalHeader">
+                    <h2 className="qrModalTitle">Room occupied</h2>
+                    <button
+                        type="button"
+                        className="cs-btn close"
+                        aria-label="Close dialog"
+                        onClick={() => setRoomOccupiedModalOpen(false)}
+                    />
+                </div>
+                <p className="appModalMessage">
+                    This room is already occupied by another participant token.
+                </p>
+                <menu className="leaveModalActions">
+                    <button type="button" className="cs-btn" onClick={backToMain}>
+                        Back to main
+                    </button>
+                    <button
+                        type="button"
+                        className="cs-btn"
+                        onClick={() => setRoomOccupiedModalOpen(false)}
+                    >
+                        Close
+                    </button>
+                </menu>
+            </section>
+        </div>
+    ) : null
+
     const takeoverDetectedModal =
-        mode !== 'initial' && takeoverModalOpen && isTakeoverError ? (
+        mode !== 'initial' && takeoverModalOpen && (isTakeoverError || securityTakeoverDetected) ? (
             <div className="qrModalBackdrop" role="dialog" aria-modal="true">
                 <section className="appModal appModalError leaveModal">
                     <div className="qrModalHeader">
@@ -570,6 +625,7 @@ export function App() {
         return (
             <main className="demoShell demoShellInitial">
                 {roomNotFoundModal}
+                {roomOccupiedModal}
                 {joinModalOpen && (
                     <div className="qrModalBackdrop" role="dialog" aria-modal="true">
                         <section className="appModal leaveModal">
@@ -703,6 +759,7 @@ export function App() {
     return (
         <main className="demoShell demoShellChat">
             {roomNotFoundModal}
+            {roomOccupiedModal}
             {takeoverDetectedModal}
             {leaveConfirmOpen && (
                 <div className="qrModalBackdrop" role="dialog" aria-modal="true">

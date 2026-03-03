@@ -21,7 +21,8 @@
     "scripts": {
         "build": "tsup src/index.ts src/node.ts --dts --format esm,cjs --clean",
         "precommit": "pnpm exec biome check src tests && pnpm run test:unit",
-        "test": "vitest -c vitest.config.ts --run",
+        "test": "vitest -c vitest.config.ts --run tests/unit tests/integration",
+        "test:rules": "vitest -c vitest.config.ts --run tests/rules",
         "test:unit": "vitest -c vitest.config.ts --run tests/unit",
         "emulator": "npx firebase-tools emulators:start --project demo --only firestore,auth --import=.fb-data --export-on-exit",
         "rules:deploy": "npx firebase-tools deploy --only firestore:rules --project ${FIREBASE_PROJECT_ID:-demo}",
@@ -32,6 +33,7 @@
         "firebase": "^10.14.1"
     },
     "devDependencies": {
+        "@firebase/rules-unit-testing": "^4.0.1",
         "dotenv": "^17.2.3",
         "vitest": "^4.0.4"
     }

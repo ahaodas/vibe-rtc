@@ -9,6 +9,10 @@ const firebaseConfig = {
     messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
     appId: import.meta.env.VITE_FIREBASE_APP_ID,
 }
+const FIRESTORE_EMULATOR_HOST =
+    import.meta.env.VITE_FIRESTORE_EMULATOR_HOST ?? import.meta.env.FIRESTORE_EMULATOR_HOST
+const FIREBASE_AUTH_EMULATOR_HOST =
+    import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST ?? import.meta.env.FIREBASE_AUTH_EMULATOR_HOST
 
 type Who = 'caller' | 'callee'
 type MakeOptions = {
@@ -50,8 +54,11 @@ function makeLogger(prefix: string) {
 }
 
 async function make(role: Who, opts: MakeOptions = {}) {
-    const { db, auth } = await ensureFirebase(firebaseConfig)
-    const signalDb = new FBAdapter(db, auth)
+    const { db, auth } = await ensureFirebase(firebaseConfig, {
+        firestoreEmulatorHost: FIRESTORE_EMULATOR_HOST,
+        authEmulatorHost: FIREBASE_AUTH_EMULATOR_HOST,
+    })
+    const signalDb = new FBAdapter(db, auth, { securityMode: 'demo_hardened' })
     const connectionStrategy = opts.connectionStrategy ?? 'DEFAULT'
 
     const log = makeLogger(role)

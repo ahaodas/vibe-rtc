@@ -20,6 +20,12 @@ This package is internal and not published.
 pnpm --filter @vibe-rtc/rtc-e2e test
 ```
 
+Run against local Firebase emulators (from repo root):
+
+```bash
+pnpm test:e2e:emu
+```
+
 Playwright config starts local Vite server (`dev:e2e`) and runs Chromium tests.
 
 ## Local Dev Server for E2E Harness
@@ -36,6 +42,11 @@ The harness expects Firebase Vite env variables:
 - `VITE_FIREBASE_PROJECT_ID`
 - `VITE_FIREBASE_APP_ID`
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
+
+Optional emulator env:
+
+- `FIRESTORE_EMULATOR_HOST` or `VITE_FIRESTORE_EMULATOR_HOST`
+- `FIREBASE_AUTH_EMULATOR_HOST` or `VITE_FIREBASE_AUTH_EMULATOR_HOST`
 
 STUN servers for E2E are configured directly in `src/main.ts` via `rtcConfiguration`.
 The harness also supports strategy override per role factory call

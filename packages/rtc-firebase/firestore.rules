@@ -2,92 +2,365 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
-      return request.auth != null;
+      return request.auth != null
+        && request.auth.uid is string
+        && request.auth.uid.size() > 0;
     }
 
-    function uid() {
-      return request.auth.uid;
+    function strLen(value, min, max) {
+      return value is string
+        && value.size() >= min
+        && value.size() <= max;
     }
 
-    function roomDoc(roomId) {
-      return get(/databases/$(database)/documents/rooms/$(roomId));
+    function optionalStrLen(value, max) {
+      return value == null || (value is string && value.size() <= max);
     }
 
-    function isRoomCaller(roomId) {
-      return roomDoc(roomId).data.callerUid == uid();
+    function optionalIntRange(value, min, max) {
+      return value == null || (value is int && value >= min && value <= max);
     }
 
-    function isRoomCallee(roomId) {
-      return roomDoc(roomId).data.calleeUid == uid();
+    function validIcePhase(value) {
+      return value == null || value in ['LAN', 'STUN', 'STUN_ONLY', 'TURN_ENABLED'];
     }
 
-    function isRoomCreator(roomId) {
-      return roomDoc(roomId).data.creatorUid == uid();
+    function validTokenHash(value) {
+      return strLen(value, 32, 128)
+        && value.matches('^[A-Za-z0-9_-]+$');
     }
 
-    function roomWritableByParticipant(roomId) {
-      return isRoomCaller(roomId) || isRoomCallee(roomId) || isRoomCreator(roomId);
+    function roomExists(roomId) {
+      return exists(/databases/$(database)/documents/rooms/$(roomId));
     }
 
-    function validRoomKeys() {
-      return request.resource.data.keys().hasOnly([
+    function roomData(roomId) {
+      return get(/databases/$(database)/documents/rooms/$(roomId)).data;
+    }
+
+    function roomActive(data) {
+      return data != null
+        && data is map
+        && ('expiresAt' in data)
+        && data.expiresAt is timestamp
+        && data.expiresAt > request.time;
+    }
+
+    function validRoomId(roomId) {
+      return roomId.matches('^[A-Za-z0-9_-]{20,128}$');
+    }
+
+    function validSlot(slot) {
+      return slot == null || (
+        slot is map
+        && slot.keys().hasOnly(['participantId', 'sessionId', 'joinedAt', 'lastSeenAt'])
+        && strLen(slot.participantId, 8, 128)
+        && strLen(slot.sessionId, 8, 256)
+        && slot.joinedAt is int
+        && slot.lastSeenAt is int
+      );
+    }
+
+    function validSlots(slots) {
+      return slots is map
+        && slots.keys().hasOnly(['caller', 'callee'])
+        && validSlot(slots.caller)
+        && validSlot(slots.callee);
+    }
+
+    function validRoomKeys(data) {
+      return data.keys().hasOnly([
         'creatorUid',
         'callerUid',
         'calleeUid',
+        'callerTokenHash',
+        'joinTokenHash',
+        'calleeTokenHash',
+        'activeCallerSessionId',
+        'callerTokenProof',
+        'slots',
         'offer',
+        'offerMeta',
         'answer',
+        'answerMeta',
         'epoch',
-        'callerHeartbeatAt',
-        'calleeHeartbeatAt',
         'createdAt',
         'updatedAt',
         'expiresAt'
       ]);
     }
 
-    function validCandidateKeys() {
-      return request.resource.data.keys().hasOnly([
+    function validSignalPayload(value, expectedType) {
+      return value is map
+        && value.keys().hasOnly([
+          'type',
+          'sdp',
+          'epoch',
+          'sessionId',
+          'pcGeneration',
+          'forPcGeneration',
+          'gen',
+          'forGen',
+          'icePhase'
+        ])
+        && value.type == expectedType
+        && strLen(value.sdp, 1, 20000)
+        && (!('epoch' in value) || optionalIntRange(value.epoch, 0, 1000000))
+        && (!('sessionId' in value) || optionalStrLen(value.sessionId, 128))
+        && (!('pcGeneration' in value) || optionalIntRange(value.pcGeneration, 0, 1000000))
+        && (!('forPcGeneration' in value) || optionalIntRange(value.forPcGeneration, 0, 1000000))
+        && (!('gen' in value) || optionalIntRange(value.gen, 0, 1000000))
+        && (!('forGen' in value) || optionalIntRange(value.forGen, 0, 1000000))
+        && (!('icePhase' in value) || validIcePhase(value.icePhase));
+    }
+
+    function validOfferValue(value) {
+      return value == null || validSignalPayload(value, 'offer');
+    }
+
+    function validAnswerValue(value) {
+      return value == null || validSignalPayload(value, 'answer');
+    }
+
+    function validOfferMeta(value) {
+      return value is map
+        && value.keys().hasOnly(['tokenHash', 'sessionId'])
+        && validTokenHash(value.tokenHash)
+        && optionalStrLen(value.sessionId, 128);
+    }
+
+    function validAnswerMeta(value) {
+      return value is map
+        && value.keys().hasOnly(['tokenHash', 'sessionId'])
+        && validTokenHash(value.tokenHash)
+        && optionalStrLen(value.sessionId, 128);
+    }
+
+    function validCreateTimestamps(data) {
+      return data.createdAt is timestamp
+        && data.updatedAt is timestamp
+        && data.expiresAt is timestamp
+        && data.expiresAt > request.time
+        && data.expiresAt <= request.time + duration.value(4, 'h');
+    }
+
+    function immutableRoomFieldsUnchanged() {
+      return request.resource.data.creatorUid == resource.data.creatorUid
+        && request.resource.data.callerTokenHash == resource.data.callerTokenHash
+        && request.resource.data.joinTokenHash == resource.data.joinTokenHash
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.expiresAt == resource.data.expiresAt
+        && request.resource.data.epoch == resource.data.epoch;
+    }
+
+    function roomUpdateBaseValid() {
+      return signedIn()
+        && roomActive(resource.data)
+        && validRoomKeys(request.resource.data)
+        && validSlots(request.resource.data.slots)
+        && immutableRoomFieldsUnchanged()
+        && request.resource.data.updatedAt is timestamp
+        && resource.data.updatedAt is timestamp
+        && request.resource.data.updatedAt >= resource.data.updatedAt;
+    }
+
+    function changedKeys() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+
+    function canClaimOrTakeOverCallee() {
+      return request.resource.data.calleeUid == request.auth.uid
+        && request.resource.data.calleeTokenHash == resource.data.joinTokenHash
+        && request.resource.data.slots.caller == resource.data.slots.caller
+        && request.resource.data.slots.callee is map
+        && strLen(request.resource.data.slots.callee.sessionId, 8, 256)
+        && strLen(request.resource.data.slots.callee.participantId, 8, 128)
+        && (
+          (
+            resource.data.calleeTokenHash == null
+            && changedKeys().hasOnly([
+              'calleeTokenHash',
+              'calleeUid',
+              'slots',
+              'updatedAt'
+            ])
+          ) || (
+            resource.data.calleeTokenHash is string
+            && resource.data.calleeTokenHash == resource.data.joinTokenHash
+            && changedKeys().hasOnly([
+              'calleeUid',
+              'slots',
+              'updatedAt'
+            ])
+          )
+        );
+    }
+
+    function canCallerWriteOffer() {
+      return changedKeys().hasOnly([
+          'offer',
+          'offerMeta',
+          'activeCallerSessionId',
+          'callerTokenProof',
+          'updatedAt',
+          'slots'
+        ])
+        && validOfferValue(request.resource.data.offer)
+        && validOfferMeta(request.resource.data.offerMeta)
+        && request.resource.data.offerMeta.tokenHash == resource.data.callerTokenHash
+        && request.resource.data.callerTokenProof == resource.data.callerTokenHash
+        && strLen(request.resource.data.activeCallerSessionId, 8, 256)
+        && request.resource.data.slots.callee == resource.data.slots.callee
+        && request.resource.data.slots.caller is map
+        && request.resource.data.slots.caller.sessionId == request.resource.data.activeCallerSessionId
+        && strLen(request.resource.data.slots.caller.participantId, 8, 128);
+    }
+
+    function canCalleeWriteAnswer() {
+      return resource.data.calleeTokenHash is string
+        && resource.data.slots.callee is map
+        && changedKeys().hasOnly([
+          'answer',
+          'answerMeta',
+          'updatedAt'
+        ])
+        && validAnswerValue(request.resource.data.answer)
+        && validAnswerMeta(request.resource.data.answerMeta)
+        && request.resource.data.answerMeta.tokenHash == resource.data.calleeTokenHash
+        && request.resource.data.answerMeta.sessionId == resource.data.slots.callee.sessionId;
+    }
+
+    function canCallerTakeOverSession() {
+      return changedKeys().hasOnly([
+          'activeCallerSessionId',
+          'callerTokenProof',
+          'callerUid',
+          'updatedAt',
+          'slots'
+        ])
+        && request.resource.data.callerTokenProof == resource.data.callerTokenHash
+        && strLen(request.resource.data.activeCallerSessionId, 8, 256)
+        && request.resource.data.callerUid == request.auth.uid
+        && request.resource.data.slots.callee == resource.data.slots.callee
+        && request.resource.data.slots.caller is map
+        && request.resource.data.slots.caller.sessionId == request.resource.data.activeCallerSessionId
+        && strLen(request.resource.data.slots.caller.participantId, 8, 128);
+    }
+
+    function candidatesReadable(roomId) {
+      return signedIn()
+        && roomExists(roomId)
+        && roomActive(roomData(roomId));
+    }
+
+    function validCandidateKeys(data) {
+      return data.keys().hasOnly([
         'candidate',
         'sdpMid',
         'sdpMLineIndex',
         'usernameFragment',
+        'sessionId',
+        'ownerSessionId',
         'epoch',
+        'pcGeneration',
+        'gen',
+        'icePhase',
+        'tokenHash',
         'createdAt'
       ]);
     }
 
+    function validCandidatePayload(data) {
+      return validCandidateKeys(data)
+        && strLen(data.candidate, 1, 3000)
+        && (!('sdpMid' in data) || optionalStrLen(data.sdpMid, 32))
+        && (!('sdpMLineIndex' in data) || optionalIntRange(data.sdpMLineIndex, 0, 64))
+        && (!('usernameFragment' in data) || optionalStrLen(data.usernameFragment, 256))
+        && (!('sessionId' in data) || optionalStrLen(data.sessionId, 128))
+        && ('ownerSessionId' in data)
+        && optionalStrLen(data.ownerSessionId, 256)
+        && (!('epoch' in data) || optionalIntRange(data.epoch, 0, 1000000))
+        && (!('pcGeneration' in data) || optionalIntRange(data.pcGeneration, 0, 1000000))
+        && (!('gen' in data) || optionalIntRange(data.gen, 0, 1000000))
+        && (!('icePhase' in data) || validIcePhase(data.icePhase))
+        && ('tokenHash' in data)
+        && validTokenHash(data.tokenHash)
+        && (
+          !('createdAt' in data)
+          || data.createdAt is timestamp
+          || data.createdAt == request.time
+        );
+    }
+
     match /rooms/{roomId} {
-      allow read: if signedIn();
+      allow list: if false;
+
+      allow get: if signedIn()
+        && resource != null
+        && roomActive(resource.data);
 
       allow create: if signedIn()
-        && validRoomKeys()
-        && request.resource.data.creatorUid == uid()
-        && request.resource.data.callerUid == uid();
+        && validRoomId(roomId)
+        && validRoomKeys(request.resource.data)
+        && validSlots(request.resource.data.slots)
+        && request.resource.data.creatorUid == request.auth.uid
+        && request.resource.data.callerUid == request.auth.uid
+        && request.resource.data.calleeUid == null
+        && validTokenHash(request.resource.data.callerTokenHash)
+        && validTokenHash(request.resource.data.joinTokenHash)
+        && request.resource.data.calleeTokenHash == null
+        && strLen(request.resource.data.activeCallerSessionId, 8, 256)
+        && request.resource.data.callerTokenProof == request.resource.data.callerTokenHash
+        && request.resource.data.slots.callee == null
+        && request.resource.data.slots.caller is map
+        && request.resource.data.slots.caller.sessionId == request.resource.data.activeCallerSessionId
+        && strLen(request.resource.data.slots.caller.participantId, 8, 128)
+        && request.resource.data.offer == null
+        && request.resource.data.offerMeta == null
+        && request.resource.data.answer == null
+        && request.resource.data.answerMeta == null
+        && request.resource.data.epoch is int
+        && request.resource.data.epoch == 0
+        && validCreateTimestamps(request.resource.data);
 
-      allow update: if signedIn()
-        && validRoomKeys()
-        && (
-          roomWritableByParticipant(roomId)
-          || (resource.data.callerUid == null && request.resource.data.callerUid == uid())
-          || (resource.data.calleeUid == null && request.resource.data.calleeUid == uid())
-        );
+      allow update: if roomUpdateBaseValid() && (
+        canClaimOrTakeOverCallee()
+        || canCallerWriteOffer()
+        || canCalleeWriteAnswer()
+        || canCallerTakeOverSession()
+      );
 
-      allow delete: if signedIn() && (isRoomCaller(roomId) || isRoomCreator(roomId));
+      // Delete requires recent caller proof. Adapter refreshes `callerTokenProof` + `updatedAt`
+      // immediately before delete, so stale observers cannot delete older rooms.
+      allow delete: if signedIn()
+        && roomActive(resource.data)
+        && resource.data.callerUid == request.auth.uid
+        && resource.data.callerTokenProof == resource.data.callerTokenHash
+        && resource.data.updatedAt > request.time - duration.value(1, 'm');
 
       match /callerCandidates/{candidateId} {
-        allow read: if signedIn() && roomWritableByParticipant(roomId);
-        allow create, update: if signedIn()
-          && validCandidateKeys()
-          && isRoomCaller(roomId);
-        allow delete: if signedIn() && (isRoomCaller(roomId) || isRoomCreator(roomId));
+        allow list: if candidatesReadable(roomId);
+        allow get: if candidatesReadable(roomId);
+        allow create: if candidatesReadable(roomId)
+          && candidateId.matches('^caller-([0-9]|[1-7][0-9]|80)$')
+          && validCandidatePayload(request.resource.data)
+          && roomData(roomId).slots.caller is map
+          && request.resource.data.ownerSessionId == roomData(roomId).slots.caller.sessionId
+          && request.resource.data.tokenHash == roomData(roomId).callerTokenHash;
+        allow update, delete: if false;
       }
 
       match /calleeCandidates/{candidateId} {
-        allow read: if signedIn() && roomWritableByParticipant(roomId);
-        allow create, update: if signedIn()
-          && validCandidateKeys()
-          && isRoomCallee(roomId);
-        allow delete: if signedIn() && (isRoomCaller(roomId) || isRoomCreator(roomId));
+        allow list: if candidatesReadable(roomId);
+        allow get: if candidatesReadable(roomId);
+        allow create: if candidatesReadable(roomId)
+          && candidateId.matches('^callee-([0-9]|[1-7][0-9]|80)$')
+          && validCandidatePayload(request.resource.data)
+          && roomData(roomId).slots.callee is map
+          && request.resource.data.ownerSessionId == roomData(roomId).slots.callee.sessionId
+          && roomData(roomId).calleeTokenHash is string
+          && request.resource.data.tokenHash == roomData(roomId).calleeTokenHash;
+        allow update, delete: if false;
       }
     }
   }

@@ -1,2 +1,8 @@
 export { ensureFirebase } from './ensureFirebase'
-export { FBAdapter } from './FBAdapter'
+export {
+    FBAdapter,
+    type FBAdapterCallbacks,
+    type FBAdapterOptions,
+    type FBAdapterStorage,
+    type SecurityMode,
+} from './FBAdapter'

@@ -100,3 +100,28 @@ pnpm --filter @vibe-rtc/rtc-firebase build
 pnpm --filter @vibe-rtc/rtc-firebase test
 pnpm --filter @vibe-rtc/rtc-firebase emulator
 ```
+
+## Firestore Rules Tests (Emulator)
+
+Rules tests are in:
+
+- `tests/rules/firestore.rules.test.ts`
+- `tests/rules/helpers.ts`
+
+Run only rules tests:
+
+```bash
+pnpm --filter @vibe-rtc/rtc-firebase run test:rules
+```
+
+Recommended (auto-start firestore emulator):
+
+```bash
+pnpm test:rules:emu
+```
+
+This suite covers:
+
+- happy-path caller/callee flow
+- edge cases (TTL, payload size limits, candidate bounds, immutable fields)
+- attacking scenarios (list/hijack/tamper/flood/modify)

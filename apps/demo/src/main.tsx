@@ -48,6 +48,13 @@ const DEMO_PING_INTERVAL_MS = 1000
 const DEMO_PING_WINDOW_SIZE = 5
 const DEMO_NET_RTT_INTERVAL_MS = 1000
 const PROGRESS_STEP_PX = 10
+const SECURITY_EVENT_SHARE_LINK = 'vibe:security-share-link'
+const SECURITY_EVENT_ROOM_OCCUPIED = 'vibe:security-room-occupied'
+const SECURITY_EVENT_TAKEN_OVER = 'vibe:security-taken-over'
+const FIRESTORE_EMULATOR_HOST =
+    import.meta.env.VITE_FIRESTORE_EMULATOR_HOST ?? import.meta.env.FIRESTORE_EMULATOR_HOST
+const FIREBASE_AUTH_EMULATOR_HOST =
+    import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST ?? import.meta.env.FIREBASE_AUTH_EMULATOR_HOST
 
 const PRIMARY_HUE_SHIFT_VARS = [
     '--bg',
@@ -220,8 +227,40 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
             projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
             appId: import.meta.env.VITE_FIREBASE_APP_ID,
         }
-        const { db, auth } = await ensureFirebase(fbConfig)
-        const adapter = new FBAdapter(db, auth)
+        const { db, auth } = await ensureFirebase(fbConfig, {
+            firestoreEmulatorHost: FIRESTORE_EMULATOR_HOST,
+            authEmulatorHost: FIREBASE_AUTH_EMULATOR_HOST,
+        })
+        const adapter = new FBAdapter(db, auth, {
+            securityMode: 'demo_hardened',
+            importTokensFromHash: true,
+            callbacks: {
+                onShareLink(payload: { roomId: string; url: string }) {
+                    if (typeof window !== 'undefined') {
+                        window.dispatchEvent(
+                            new CustomEvent(SECURITY_EVENT_SHARE_LINK, { detail: payload }),
+                        )
+                    }
+                },
+                onRoomOccupied(payload: { roomId: string }) {
+                    if (typeof window !== 'undefined') {
+                        window.dispatchEvent(
+                            new CustomEvent(SECURITY_EVENT_ROOM_OCCUPIED, { detail: payload }),
+                        )
+                    }
+                },
+                onTakenOver(payload: { roomId: string; bySessionId?: string }) {
+                    if (typeof window !== 'undefined') {
+                        window.dispatchEvent(
+                            new CustomEvent(SECURITY_EVENT_TAKEN_OVER, { detail: payload }),
+                        )
+                    }
+                },
+                onSecurityError(err: unknown) {
+                    console.error('[vibe-rtc][security]', err)
+                },
+            },
+        })
         return adapter
     }
 

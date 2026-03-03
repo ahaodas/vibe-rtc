@@ -12,6 +12,10 @@
         "build:all": "pnpm run build:libs && pnpm run build:sdk",
         "test:int": "pnpm --filter @vibe-rtc/rtc-firebase run test",
         "test:e2e": "pnpm --filter @vibe-rtc/rtc-e2e run test",
+        "test:e2e:emu": "pnpm exec firebase emulators:exec --config firebase.json --project demo-vibe-rtc --only firestore,auth \"CI=1 FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 VITE_FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 VITE_FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099 VITE_FIREBASE_PROJECT_ID=demo-vibe-rtc VITE_FIREBASE_API_KEY=demo-api-key VITE_FIREBASE_APP_ID=1:1234567890:web:demo VITE_FIREBASE_MESSAGING_SENDER_ID=1234567890 pnpm test:e2e\"",
+        "test:rules": "pnpm --filter @vibe-rtc/rtc-firebase run test:rules",
+        "test:rules:emu": "pnpm exec firebase emulators:exec --config firebase.json --project demo-vibe-rtc --only firestore \"pnpm test:rules\"",
+        "emulators": "pnpm exec firebase emulators:start --config firebase.json --project demo-vibe-rtc",
         "show-report": "pnpm --filter @vibe-rtc/rtc-e2e run show-report",
         "format": "biome format --write ./packages/**/* --verbose",
         "biome:fix:safe": "biome check --write ./packages ./apps",
@@ -45,6 +49,7 @@
         "@commitlint/cli": "^19.8.0",
         "@commitlint/config-conventional": "^19.8.0",
         "@types/node": "^24.9.1",
+        "firebase-tools": "^13.35.1",
         "husky": "^9.1.7",
         "tsup": "^8.5.0",
         "typescript": "^5.9.3"
