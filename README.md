@@ -40,6 +40,43 @@ pnpm lint
 pnpm typecheck
 ```
 
+## Development
+
+When changing exported APIs in workspace packages (for example `rtc-core` -> `rtc-react`/`demo`),
+rebuild changed package(s) and their consumers before running app/type checks.
+
+Typical flow:
+
+```bash
+# Rebuild all libraries and SDK
+pnpm build:all
+
+# Or rebuild specific chain explicitly
+pnpm --filter @vibe-rtc/rtc-core build
+pnpm --filter @vibe-rtc/rtc-react build
+pnpm --filter @vibe-rtc/demo build
+```
+
+Linting and fixes are done with Biome:
+
+```bash
+# Lint (Biome)
+pnpm lint
+
+# Apply safe Biome fixes
+pnpm biome:fix:safe
+```
+
+Commit messages must follow Conventional Commits (validated by commitlint hook):
+
+```text
+feat(rtc-react): add per-session connectionStrategy override
+fix(rtc-core): keep browser-native ICE servers unfiltered
+chore(release): version packages
+```
+
+Allowed common types: `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `build`, `ci`.
+
 ## Local Demo
 
 Demo app lives in `apps/demo`.
