@@ -70,12 +70,20 @@ export function reducer(state: VibeRTCState, a: Action): VibeRTCState {
 }
 
 export function normalizeError(err: unknown): VibeRTCError {
-    const any = err as any
+    const value =
+        err && typeof err === 'object'
+            ? (err as {
+                  name?: unknown
+                  message?: unknown
+                  code?: unknown
+                  cause?: unknown
+              })
+            : undefined
     return {
-        name: String(any?.name ?? 'Error'),
-        message: String(any?.message ?? 'Unknown error'),
-        code: typeof any?.code === 'string' ? any.code : undefined,
-        cause: any?.cause,
+        name: String(value?.name ?? 'Error'),
+        message: String(value?.message ?? 'Unknown error'),
+        code: typeof value?.code === 'string' ? value.code : undefined,
+        cause: value?.cause,
         at: Date.now(),
     }
 }

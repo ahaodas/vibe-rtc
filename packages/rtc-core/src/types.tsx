@@ -42,11 +42,11 @@ export type RoomDoc = {
     offer: OfferSDP | null
     answer: AnswerSDP | null
     epoch?: number
-    callerHeartbeatAt?: any
-    calleeHeartbeatAt?: any
-    createdAt: any
-    updatedAt: any
-    expiresAt: any
+    callerHeartbeatAt?: unknown
+    calleeHeartbeatAt?: unknown
+    createdAt: unknown
+    updatedAt: unknown
+    expiresAt: unknown
 }
 
 export type CandidateDoc = RTCIceCandidateInit & {

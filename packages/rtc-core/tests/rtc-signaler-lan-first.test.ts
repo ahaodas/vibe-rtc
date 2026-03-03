@@ -3,6 +3,11 @@ import { RTCError, RTCErrorCode } from '../src/errors'
 import { RTCSignaler } from '../src/RTCSignaler'
 import type { RoomDoc, SignalDB } from '../src/types'
 
+type PrivateSignalerForTests = RTCSignaler & {
+    reconnectHard: (opts?: { awaitReadyMs?: number }) => Promise<void>
+    sessionId: string | null
+}
+
 const makeRoom = (): RoomDoc => ({
     creatorUid: null,
     callerUid: null,
@@ -385,7 +390,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         await signaler.connect()
 
         const reconnectHard = vi.fn().mockResolvedValue(undefined)
-        ;(signaler as any).reconnectHard = reconnectHard
+        ;(signaler as PrivateSignalerForTests).reconnectHard = reconnectHard
 
         const pc = FakeRTCPeerConnection.instances[0]
         pc.connectionState = 'connecting'
@@ -409,7 +414,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         await signaler.connect()
 
         const reconnectHard = vi.fn().mockResolvedValue(undefined)
-        ;(signaler as any).reconnectHard = reconnectHard
+        ;(signaler as PrivateSignalerForTests).reconnectHard = reconnectHard
 
         const pc = FakeRTCPeerConnection.instances[0]
         pc.connectionState = 'connecting'
@@ -445,7 +450,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         await signaler.connect()
 
         const reconnectHard = vi.fn().mockResolvedValue(undefined)
-        ;(signaler as any).reconnectHard = reconnectHard
+        ;(signaler as PrivateSignalerForTests).reconnectHard = reconnectHard
 
         const pc = FakeRTCPeerConnection.instances[0]
         pc.connectionState = 'connecting'
@@ -479,7 +484,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         await signaler.joinRoom('room-hard-timeout-suppressed')
         await signaler.connect()
 
-        ;(signaler as any).reconnectHard = vi.fn().mockRejectedValue(
+        ;(signaler as PrivateSignalerForTests).reconnectHard = vi.fn().mockRejectedValue(
             new RTCError(RTCErrorCode.WAIT_READY_TIMEOUT, {
                 message: 'waitReady timeout',
                 phase: 'transport',
@@ -646,7 +651,9 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         await signaler.connect()
         await vi.advanceTimersByTimeAsync(25)
         const baselineCalls = setRemoteSpy.mock.calls.length
-        const currentSessionId = (signaler as any).sessionId as string
+        const currentSessionId = (signaler as PrivateSignalerForTests).sessionId
+        expect(currentSessionId).toBeTruthy()
+        if (!currentSessionId) throw new Error('sessionId should be defined')
 
         answerCb?.({
             type: 'answer',

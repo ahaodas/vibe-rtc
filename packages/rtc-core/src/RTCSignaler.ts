@@ -86,7 +86,7 @@ function mkDbg(ctx: {
     pc: () => RTCPeerConnection | undefined
     enabled: boolean
 }) {
-    const p = (msg: string, extra?: any) => {
+    const p = (msg: string, extra?: unknown) => {
         if (!ctx.enabled) return
         const pc = ctx.pc()
         const tag = `[${++__seq}|${now()}|${ctx.role}|${ctx.roomId() ?? 'no-room'}]`
@@ -304,11 +304,15 @@ export class RTCSignaler {
         private readonly signalDb: SignalDB,
         opts: RTCSignalerOptions = {},
     ) {
+        const globalWithRuntimeFlags = globalThis as typeof globalThis & {
+            __vitest_worker__?: unknown
+            process?: { env?: { NODE_ENV?: string } }
+        }
         const isTestEnv =
             // Vitest exposes this marker in test runtime.
-            typeof (globalThis as any).__vitest_worker__ !== 'undefined' ||
+            typeof globalWithRuntimeFlags.__vitest_worker__ !== 'undefined' ||
             // Fallback for Node/Jest-like runners.
-            (globalThis as any).process?.env?.NODE_ENV === 'test'
+            globalWithRuntimeFlags.process?.env?.NODE_ENV === 'test'
         this.debugEnabled = opts.debug ?? isTestEnv
         this.dbg = mkDbg({
             role: this.role,
@@ -529,7 +533,11 @@ export class RTCSignaler {
             this.role === 'caller' ? this.streams.calleeIce$ : this.streams.callerIce$
         this.rxSubs.push(
             remoteIce$.subscribe(async (c) => {
-                if (!this.acceptEpoch((c as any).epoch)) return
+                const candidateSignal = c as RTCIceCandidateInit & {
+                    epoch?: number
+                    icePhase?: IcePhase
+                }
+                if (!this.acceptEpoch(candidateSignal.epoch)) return
                 if (!(await this.ensureOwnSlotActive('recv-candidate'))) return
                 const remoteSessionId = this.getSignalSessionId(c)
                 this.dbg.p('signaling-recv:candidate', {
@@ -539,7 +547,7 @@ export class RTCSignaler {
                 })
                 const syncedSession = this.syncPeerToRemoteSession(
                     remoteSessionId,
-                    (c as any).icePhase,
+                    candidateSignal.icePhase,
                     'candidate',
                 )
                 if (syncedSession == null) {
@@ -602,7 +610,8 @@ export class RTCSignaler {
         // --- Rx: incoming offer ---
         this.rxSubs.push(
             this.streams.offer$.subscribe(async (offer) => {
-                if (!this.acceptEpoch((offer as any).epoch)) return
+                const offerSignal = offer as OfferSDP
+                if (!this.acceptEpoch(offerSignal.epoch)) return
                 if (!(await this.ensureOwnSlotActive('recv-offer'))) return
                 const remoteSessionId = this.getSignalSessionId(offer)
                 this.dbg.p('signaling-recv:offer', {
@@ -632,7 +641,7 @@ export class RTCSignaler {
                 }
                 const localSessionId = this.syncPeerToRemoteSession(
                     remoteSessionId,
-                    (offer as any).icePhase,
+                    offerSignal.icePhase,
                     'offer',
                 )
                 if (localSessionId == null) {
@@ -688,7 +697,9 @@ export class RTCSignaler {
                         }
                         this.dbg.p('glare → rollback')
                         try {
-                            await this.pc?.setLocalDescription({ type: 'rollback' } as any)
+                            await this.pc?.setLocalDescription({
+                                type: 'rollback',
+                            } as RTCSessionDescriptionInit)
                         } catch (e) {
                             this.dbg.pe('rollback fail', e)
                         }
@@ -711,7 +722,8 @@ export class RTCSignaler {
                     this.emitDebug('SRD(offer) done')
 
                     while (this.pendingIce.length) {
-                        const c = this.pendingIce.shift()!
+                        const c = this.pendingIce.shift()
+                        if (!c) continue
                         try {
                             await this.pc?.addIceCandidate(c)
                         } catch (e) {
@@ -786,7 +798,8 @@ export class RTCSignaler {
         // --- Rx: incoming answer ---
         this.rxSubs.push(
             this.streams.answer$.subscribe(async (answer) => {
-                if (!this.acceptEpoch((answer as any).epoch)) return
+                const answerSignal = answer as AnswerSDP
+                if (!this.acceptEpoch(answerSignal.epoch)) return
                 if (!(await this.ensureOwnSlotActive('recv-answer'))) return
                 const remoteSessionId = this.getSignalSessionId(answer)
                 this.dbg.p('signaling-recv:answer', {
@@ -829,7 +842,7 @@ export class RTCSignaler {
                     }
                     const localSessionId = this.syncPeerToRemoteSession(
                         remoteSessionId,
-                        (answer as any).icePhase,
+                        answerSignal.icePhase,
                         'answer',
                     )
                     if (localSessionId == null) {
@@ -857,7 +870,8 @@ export class RTCSignaler {
                     this.emitDebug('SRD(answer) done')
 
                     while (this.pendingIce.length) {
-                        const c = this.pendingIce.shift()!
+                        const c = this.pendingIce.shift()
+                        if (!c) continue
                         try {
                             await this.pc.addIceCandidate(c)
                         } catch (e) {
@@ -1187,7 +1201,7 @@ export class RTCSignaler {
     }
 
     private getSignalSessionId(signal: unknown): string | undefined {
-        const raw = (signal as any)?.sessionId
+        const raw = (signal as { sessionId?: unknown } | null | undefined)?.sessionId
         if (typeof raw !== 'string') return undefined
         const value = raw.trim()
         return value.length > 0 ? value : undefined
@@ -1896,7 +1910,9 @@ export class RTCSignaler {
         })
         this.pc.addEventListener('connectionstatechange', () => {
             if (!this.isCurrentGeneration(generation)) return
-            const st = this.pc!.connectionState
+            const pc = this.pc
+            if (!pc) return
+            const st = pc.connectionState
             this.dbg.p(`connection=${st}`)
             this.onConnectionStateChange(st)
             this.emitDebug(`connection=${st}`)
@@ -2008,8 +2024,8 @@ export class RTCSignaler {
                     phase: this.icePhase,
                 })
                 if (this.role === 'caller')
-                    await this.streams.addCallerIceCandidate(candidatePayload as any)
-                else await this.streams.addCalleeIceCandidate(candidatePayload as any)
+                    await this.streams.addCallerIceCandidate(candidatePayload)
+                else await this.streams.addCalleeIceCandidate(candidatePayload)
             } catch (e) {
                 this.onError(
                     this.raiseError(

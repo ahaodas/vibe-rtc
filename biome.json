@@ -3,18 +3,36 @@
     "files": {
         "ignoreUnknown": true,
         "includes": [
-            "**/*",
-            "!!**/dist",
+            "apps/demo/src/**",
+            "apps/demo/tests/**",
+            "packages/rtc-core/src/**",
+            "packages/rtc-core/tests/**",
+            "packages/rtc-e2e/src/**",
+            "packages/rtc-e2e/tests/**",
+            "packages/rtc-react/src/**",
+            "packages/rtc-react/tests/**",
+            "packages/rtc-sdk/src/**",
+            "packages/rtc-sdk/tests/**",
             "!**/*.map",
-            "!!**/node_modules"
+            "!**/dist",
+            "!**/node_modules"
         ]
     },
     "formatter": {
         "includes": [
-            "**/*",
-            "!!**/dist",
+            "apps/demo/src/**",
+            "apps/demo/tests/**",
+            "packages/rtc-core/src/**",
+            "packages/rtc-core/tests/**",
+            "packages/rtc-e2e/src/**",
+            "packages/rtc-e2e/tests/**",
+            "packages/rtc-react/src/**",
+            "packages/rtc-react/tests/**",
+            "packages/rtc-sdk/src/**",
+            "packages/rtc-sdk/tests/**",
             "!**/*.map",
-            "!!**/node_modules"
+            "!**/dist",
+            "!**/node_modules"
         ],
         "enabled": true,
         "indentStyle": "space",
