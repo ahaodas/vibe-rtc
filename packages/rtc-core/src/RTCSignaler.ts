@@ -281,10 +281,12 @@ export class RTCSignaler {
     private netRttService?: NetRttService
     private remoteProgressSeq = 0
     private remoteProgressLastAt = 0
+    private signalSequence = 0
     private takeoverStopping = false
     private ownSlotActive = true
     private ownSlotCheckAt = 0
     private ownSlotCheckInFlight?: Promise<boolean>
+    private ownSlotSessionMismatchKey: string | null = null
     private candidateStats = {
         localSeen: this.makeCandidateCountMap(),
         localSent: this.makeCandidateCountMap(),
@@ -507,8 +509,10 @@ export class RTCSignaler {
         this.ownSlotActive = true
         this.ownSlotCheckAt = 0
         this.ownSlotCheckInFlight = undefined
+        this.ownSlotSessionMismatchKey = null
         this.remoteProgressSeq = 0
         this.remoteProgressLastAt = 0
+        this.signalSequence = 0
         this.pingService.stop()
         this.pingService.reset()
         this.netRttService?.stop()
@@ -655,6 +659,13 @@ export class RTCSignaler {
                 const localGeneration = this.pcGeneration
                 const desc = new RTCSessionDescription(offer)
                 const sdp = desc.sdp ?? null
+                const offerSignalKey = `${remoteSessionId ?? 'n/a'}|${
+                    offerSignal.forGen ??
+                    offerSignal.gen ??
+                    offerSignal.pcGeneration ??
+                    offerSignal.forPcGeneration ??
+                    -1
+                }|${sdp ?? ''}`
                 this.dbg.p('onOffer()', {
                     type: desc.type,
                     sdp: sdpHash(sdp),
@@ -664,11 +675,11 @@ export class RTCSignaler {
                 })
                 this.emitDebug('onOffer')
 
-                if (sdp && sdp === this.lastSeenOfferSdp) {
+                if (offerSignalKey === this.lastSeenOfferSdp) {
                     this.dbg.p('skip offer: already seen')
                     return
                 }
-                this.lastSeenOfferSdp = sdp
+                this.lastSeenOfferSdp = offerSignalKey
 
                 try {
                     if (desc.type !== 'offer') return
@@ -683,7 +694,7 @@ export class RTCSignaler {
                         return
                     }
 
-                    if (sdp && sdp === this.lastHandledOfferSdp) {
+                    if (offerSignalKey === this.lastHandledOfferSdp) {
                         this.dbg.p('skip offer (same sdp handled)')
                         return
                     }
@@ -717,7 +728,7 @@ export class RTCSignaler {
                     }
                     if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
                     this.remoteDescSet = true
-                    this.lastHandledOfferSdp = sdp
+                    this.lastHandledOfferSdp = offerSignalKey
                     this.dbg.p('SRD(offer) done, drain ICE', { pending: this.pendingIce.length })
                     this.emitDebug('SRD(offer) done')
 
@@ -763,10 +774,19 @@ export class RTCSignaler {
                         this.dbg.p('skip answer publish after epoch sync')
                         return
                     }
+                    if (!(await this.ensureOwnSlotActive('send-answer:offer-handler:publish'))) {
+                        this.dbg.p('skip answer publish: role slot is not active')
+                        return
+                    }
                     if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
+                    const localRoleSessionId = this.getLocalRoleSessionId() ?? this.sessionId
+                    const answerForSessionId = offerSignal.forSessionId ?? remoteSessionId
+                    const signalSeq = this.nextSignalSequence()
                     this.dbg.p('signaling-send:answer', {
-                        sessionId: this.sessionId ?? null,
+                        sessionId: localRoleSessionId ?? null,
+                        forSessionId: answerForSessionId ?? null,
                         generation: localGeneration,
+                        signalSeq,
                         phase: this.icePhase,
                     })
                     await this.streams.setAnswer({
@@ -774,11 +794,14 @@ export class RTCSignaler {
                         epoch: this.signalingEpoch,
                         pcGeneration: localGeneration,
                         gen: localGeneration,
-                        sessionId: this.sessionId ?? undefined,
+                        forGen: signalSeq,
+                        sessionId: localRoleSessionId ?? undefined,
+                        forSessionId: answerForSessionId ?? undefined,
                         icePhase: this.icePhase,
                     } as AnswerSDP)
                     this.dbg.p('answer published')
                 } catch (e) {
+                    if (await this.handleTakeoverWriteError('send-answer:offer-handler', e)) return
                     this.onError(
                         this.raiseError(
                             e,
@@ -802,13 +825,22 @@ export class RTCSignaler {
                 if (!this.acceptEpoch(answerSignal.epoch)) return
                 if (!(await this.ensureOwnSlotActive('recv-answer'))) return
                 const remoteSessionId = this.getSignalSessionId(answer)
+                const answerForSessionId = this.getSignalTargetSessionId(answer)
                 this.dbg.p('signaling-recv:answer', {
                     sessionId: remoteSessionId ?? null,
+                    forSessionId: answerForSessionId ?? null,
                     currentSessionId: this.sessionId ?? null,
                     phase: this.icePhase,
                 })
                 const desc = new RTCSessionDescription(answer)
                 const sdp = desc.sdp ?? null
+                const answerSignalKey = `${remoteSessionId ?? 'n/a'}|${answerForSessionId ?? 'n/a'}|${
+                    answerSignal.forGen ??
+                    answerSignal.gen ??
+                    answerSignal.pcGeneration ??
+                    answerSignal.forPcGeneration ??
+                    -1
+                }|${sdp ?? ''}`
                 this.dbg.p('onAnswer()', {
                     type: desc.type,
                     sdp: sdpHash(sdp),
@@ -816,30 +848,30 @@ export class RTCSignaler {
                 })
                 this.emitDebug('onAnswer')
 
-                if (sdp && sdp === this.lastSeenAnswerSdp) {
+                if (answerSignalKey === this.lastSeenAnswerSdp) {
                     this.dbg.p('skip answer: already seen')
                     return
                 }
-                this.lastSeenAnswerSdp = sdp
+                this.lastSeenAnswerSdp = answerSignalKey
 
                 try {
                     if (desc.type !== 'answer') return
-                    if (sdp && sdp === this.lastHandledAnswerSdp) {
-                        this.dbg.p('skip answer (same sdp handled)')
+                    const localRoleSessionId = this.getLocalRoleSessionId()
+                    if (
+                        this.role === 'caller' &&
+                        answerForSessionId &&
+                        localRoleSessionId &&
+                        answerForSessionId !== localRoleSessionId
+                    ) {
+                        this.logStaleSessionOnce('answer', remoteSessionId ?? answerForSessionId)
+                        this.dbg.p('signaling-recv:answer ignored due to target session mismatch', {
+                            answerForSessionId,
+                            localRoleSessionId,
+                            remoteSessionId: remoteSessionId ?? null,
+                        })
                         return
                     }
-                    if (this.remoteDescSet) {
-                        this.dbg.p('skip answer: remote already set')
-                        return
-                    }
-                    if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
-                        this.dbg.p(
-                            'skip answer: not waiting (state=' +
-                                (this.pc?.signalingState ?? 'no-pc') +
-                                ')',
-                        )
-                        return
-                    }
+                    const prevSessionId = this.sessionId
                     const localSessionId = this.syncPeerToRemoteSession(
                         remoteSessionId,
                         answerSignal.icePhase,
@@ -850,6 +882,33 @@ export class RTCSignaler {
                             sessionId: remoteSessionId ?? null,
                             currentSessionId: this.sessionId ?? null,
                         })
+                        return
+                    }
+                    const remoteSessionChanged =
+                        !!remoteSessionId && !!prevSessionId && remoteSessionId !== prevSessionId
+                    if (answerSignalKey === this.lastHandledAnswerSdp) {
+                        this.dbg.p('skip answer (same sdp handled)')
+                        return
+                    }
+                    if (!this.pc || this.pc.signalingState !== 'have-local-offer') {
+                        if (
+                            this.role === 'caller' &&
+                            remoteSessionChanged &&
+                            this.pc &&
+                            this.pc.signalingState === 'stable'
+                        ) {
+                            this.dbg.p('answer indicates remote session change -> reconnectHard', {
+                                remoteSessionId,
+                                prevSessionId,
+                            })
+                            void this.tryHardNow()
+                            return
+                        }
+                        this.dbg.p(
+                            'skip answer: not waiting (state=' +
+                                (this.pc?.signalingState ?? 'no-pc') +
+                                ')',
+                        )
                         return
                     }
                     const localGeneration = this.pcGeneration
@@ -863,7 +922,7 @@ export class RTCSignaler {
                         throw e
                     }
                     if (!this.isCurrentGeneration(localGeneration) || !this.pc) return
-                    this.lastHandledAnswerSdp = sdp
+                    this.lastHandledAnswerSdp = answerSignalKey
                     this.remoteDescSet = true
                     this.markRemoteProgress()
                     this.dbg.p('SRD(answer) done, drain ICE', { pending: this.pendingIce.length })
@@ -945,6 +1004,8 @@ export class RTCSignaler {
         this.phase = 'soft-reconnect'
         this.emitDebug('soft-reconnect')
         try {
+            this.makingOffer = true
+            this.remoteDescSet = false
             const offer = await this.pc.createOffer({ iceRestart: true })
             this.lastLocalOfferSdp = offer.sdp ?? null
             this.dbg.p('SLD(offer,iceRestart) start', { sdp: sdpHash(offer.sdp) })
@@ -956,9 +1017,12 @@ export class RTCSignaler {
                 return
             }
             if (!(await this.ensureOwnSlotActive('reconnect-soft:publish'))) return
+            const localRoleSessionId = this.getLocalRoleSessionId() ?? this.sessionId
+            const signalSeq = this.nextSignalSequence()
             this.dbg.p('signaling-send:offer', {
-                sessionId: this.sessionId ?? null,
+                sessionId: localRoleSessionId ?? null,
                 generation: this.pcGeneration,
+                signalSeq,
                 phase: this.icePhase,
                 source: 'reconnectSoft',
             })
@@ -967,11 +1031,14 @@ export class RTCSignaler {
                 epoch: this.signalingEpoch,
                 pcGeneration: this.pcGeneration,
                 gen: this.pcGeneration,
-                sessionId: this.sessionId ?? undefined,
+                forGen: signalSeq,
+                sessionId: localRoleSessionId ?? undefined,
+                forSessionId: localRoleSessionId ?? undefined,
                 icePhase: this.icePhase,
             } as OfferSDP)
             this.dbg.p('offer(iceRestart) published')
         } catch (e) {
+            if (await this.handleTakeoverWriteError('send-offer:reconnect-soft', e)) return
             throw this.raiseError(
                 e,
                 RTCErrorCode.SIGNALING_FAILED,
@@ -979,6 +1046,8 @@ export class RTCSignaler {
                 true,
                 'reconnectSoft failed',
             )
+        } finally {
+            this.makingOffer = false
         }
     }
 
@@ -1034,12 +1103,16 @@ export class RTCSignaler {
         })
         this.unsubscribes = []
 
-        // Best-effort presence signal so remote peer can react quickly to manual leave.
-        try {
-            await this.signalDb.leaveRoom?.(this.role)
-        } catch {}
-
         this.cleanupPeerOnly()
+
+        // Best-effort presence signal so remote peer can react quickly to manual leave.
+        // Skip it during takeover shutdown: stale tabs must not write into role docs.
+        if (!this.takeoverStopping) {
+            try {
+                void this.signalDb.leaveRoom?.(this.role).catch(() => {})
+            } catch {}
+        }
+
         this.connectedOrSubbed = false
         this.phase = 'idle'
         this.emitDebug('hangup done')
@@ -1207,6 +1280,13 @@ export class RTCSignaler {
         return value.length > 0 ? value : undefined
     }
 
+    private getSignalTargetSessionId(signal: unknown): string | undefined {
+        const raw = (signal as { forSessionId?: unknown } | null | undefined)?.forSessionId
+        if (typeof raw !== 'string') return undefined
+        const value = raw.trim()
+        return value.length > 0 ? value : undefined
+    }
+
     private logStaleSessionOnce(
         source: 'offer' | 'answer' | 'candidate',
         remoteSessionId: string | undefined,
@@ -1219,6 +1299,44 @@ export class RTCSignaler {
             remoteSessionId: remoteSessionId ?? null,
         })
         this.emitDebug('ignore-stale-session')
+    }
+
+    private errorMessage(error: unknown): string {
+        if (typeof error === 'string') return error
+        if (error && typeof error === 'object' && 'message' in error) {
+            const message = (error as { message?: unknown }).message
+            if (typeof message === 'string') return message
+        }
+        return String(error)
+    }
+
+    private isTakeoverWriteError(error: unknown): boolean {
+        const directMessage = this.errorMessage(error).toLowerCase()
+        if (directMessage.includes('taken over')) return true
+        if (error && typeof error === 'object' && 'cause' in error) {
+            const cause = (error as { cause?: unknown }).cause
+            const causeMessage = this.errorMessage(cause).toLowerCase()
+            if (causeMessage.includes('taken over')) return true
+        }
+        return false
+    }
+
+    private async handleTakeoverWriteError(source: string, error: unknown): Promise<boolean> {
+        if (!this.isTakeoverWriteError(error)) return false
+        let slot: ReturnType<typeof this.getRoleSlotFromRoom>
+        try {
+            const room = await this.signalDb.getRoom()
+            slot = this.getRoleSlotFromRoom(room, this.role)
+        } catch {}
+        await this.handleTakeoverDetected(source, slot)
+        return true
+    }
+
+    private getLocalRoleSessionId(): string | null {
+        const signalDbWithRoleSession = this.signalDb as SignalDB & {
+            getRoleSessionId?: (role: Role) => string | null
+        }
+        return signalDbWithRoleSession.getRoleSessionId?.(this.role) ?? this.sessionId
     }
 
     private getRoleSlotFromRoom(
@@ -1254,7 +1372,7 @@ export class RTCSignaler {
             role: this.role,
             source,
             myParticipantId: this.participantId,
-            mySessionId: this.sessionId,
+            mySessionId: this.getLocalRoleSessionId(),
             ownerParticipantId: slot?.participantId ?? null,
             ownerSessionId: slot?.sessionId ?? null,
         })
@@ -1276,9 +1394,10 @@ export class RTCSignaler {
 
     private async ensureOwnSlotActive(source: string): Promise<boolean> {
         if (this.takeoverStopping) return false
+        if (this.phase === 'closing' || this.phase === 'idle') return false
         if (!this.roomId || !this.participantId) return true
         const nowMs = Date.now()
-        if (this.ownSlotCheckInFlight) return this.ownSlotCheckInFlight
+        if (this.ownSlotCheckInFlight) return this.ownSlotActive
         if (nowMs - this.ownSlotCheckAt < 400) return this.ownSlotActive
 
         this.ownSlotCheckInFlight = (async () => {
@@ -1290,9 +1409,26 @@ export class RTCSignaler {
                     !!slot?.participantId &&
                     !!this.participantId &&
                     slot.participantId !== this.participantId
+                const localSessionId = this.getLocalRoleSessionId()
+                const sessionMismatch =
+                    !!slot?.sessionId && !!localSessionId && slot.sessionId !== localSessionId
                 if (ownerMismatch) {
                     active = false
                     await this.handleTakeoverDetected(source, slot)
+                } else if (sessionMismatch) {
+                    const mismatchKey = `${slot?.sessionId ?? 'none'}|${localSessionId ?? 'none'}`
+                    if (this.ownSlotSessionMismatchKey !== mismatchKey) {
+                        this.ownSlotSessionMismatchKey = mismatchKey
+                        this.dbg.p('own-slot session mismatch -> takeover', {
+                            source,
+                            roomSessionId: slot?.sessionId ?? null,
+                            localSessionId: localSessionId ?? null,
+                        })
+                    }
+                    active = false
+                    await this.handleTakeoverDetected(source, slot)
+                } else {
+                    this.ownSlotSessionMismatchKey = null
                 }
             } catch {
                 active = true
@@ -1301,15 +1437,20 @@ export class RTCSignaler {
                 this.ownSlotCheckAt = Date.now()
                 this.ownSlotCheckInFlight = undefined
             }
-            return active
+            return this.ownSlotActive
         })()
 
-        return this.ownSlotCheckInFlight
+        return this.ownSlotActive
     }
 
     private markRemoteProgress() {
         this.remoteProgressSeq += 1
         this.remoteProgressLastAt = Date.now()
+    }
+
+    private nextSignalSequence(): number {
+        this.signalSequence += 1
+        return this.signalSequence
     }
 
     private syncPeerToRemoteSession(
@@ -1319,6 +1460,17 @@ export class RTCSignaler {
     ): string | undefined {
         if (!remoteSessionId) return this.sessionId ?? undefined
         if (remoteSessionId === this.sessionId) return remoteSessionId
+        if (source === 'answer' && this.role === 'caller') {
+            this.dbg.p(`sync-remote-session:${source}`, {
+                remoteSessionId,
+                currentSessionId: this.sessionId ?? null,
+                remotePhase: this.normalizeSignalIcePhase(remotePhaseRaw) ?? 'n/a',
+                targetPhase: this.icePhase,
+            })
+            this.sessionId = remoteSessionId
+            this.emitDebug(`sync-remote:${source}`)
+            return this.sessionId ?? undefined
+        }
         if (source !== 'offer') {
             this.logStaleSessionOnce(source, remoteSessionId)
             return undefined
@@ -1332,6 +1484,7 @@ export class RTCSignaler {
             remotePhase: remotePhase ?? 'n/a',
             targetPhase,
         })
+        this.sessionId = remoteSessionId
         this.controlledPeerRebuild = true
         try {
             this.makingOffer = false
@@ -1343,7 +1496,7 @@ export class RTCSignaler {
             this.connectingWatchdogGeneration = undefined
             this.cleanupPeerOnly()
             this.icePhase = targetPhase
-            this.initPeer(remoteSessionId)
+            this.initPeer()
         } finally {
             this.controlledPeerRebuild = false
         }
@@ -1521,6 +1674,17 @@ export class RTCSignaler {
                     this.emitDebug('dc-recovery-skip')
                     return
                 }
+                const hasMissingOrClosedChannels =
+                    !this.dcFast ||
+                    !this.dcReliable ||
+                    this.dcFast.readyState === 'closed' ||
+                    this.dcReliable.readyState === 'closed'
+                if (hasMissingOrClosedChannels) {
+                    this.dbg.p(`dc recovery -> reconnectHard (${reason})`)
+                    this.emitDebug('dc-recovery:hard-reconnect')
+                    await this.tryHardNow()
+                    return
+                }
                 this.dbg.p(`dc recovery -> reconnectSoft (${reason})`)
                 this.emitDebug('dc-recovery:ice-restart')
                 try {
@@ -1602,6 +1766,7 @@ export class RTCSignaler {
 
         try {
             this.makingOffer = true
+            this.remoteDescSet = false
             const offer = await this.pc.createOffer()
             if (!this.isCurrentGeneration(generation) || !this.pc) return
             this.lastLocalOfferSdp = offer.sdp ?? null
@@ -1617,9 +1782,12 @@ export class RTCSignaler {
             }
             if (!(await this.ensureOwnSlotActive(`send-offer:${source}:publish`))) return
             if (!this.isCurrentGeneration(generation) || !this.pc) return
+            const localRoleSessionId = this.getLocalRoleSessionId() ?? this.sessionId
+            const signalSeq = this.nextSignalSequence()
             this.dbg.p('signaling-send:offer', {
-                sessionId: this.sessionId ?? null,
+                sessionId: localRoleSessionId ?? null,
                 generation,
+                signalSeq,
                 phase: this.icePhase,
                 source,
             })
@@ -1628,11 +1796,14 @@ export class RTCSignaler {
                 epoch: this.signalingEpoch,
                 pcGeneration: generation,
                 gen: generation,
-                sessionId: this.sessionId ?? undefined,
+                forGen: signalSeq,
+                sessionId: localRoleSessionId ?? undefined,
+                forSessionId: localRoleSessionId ?? undefined,
                 icePhase: this.icePhase,
             } as OfferSDP)
             this.dbg.p(source === 'bootstrap' ? 'offer published (bootstrap)' : 'offer published')
         } catch (e) {
+            if (await this.handleTakeoverWriteError(`send-offer:${source}`, e)) return
             this.dbg.pe('negotiation error', e)
             this.onError(
                 this.raiseError(
@@ -1988,6 +2159,9 @@ export class RTCSignaler {
 
         this.pc.onicecandidate = async (ev) => {
             if (!this.isCurrentGeneration(generation)) return
+            if (this.takeoverStopping) return
+            if (!this.roomId || this.phase === 'closing' || this.phase === 'idle') return
+            if (!this.pc || this.pc.signalingState === 'closed') return
             if (!ev.candidate) return
             const candidateText = ev.candidate.candidate || ''
             const candidateType = getCandidateType(candidateText)
@@ -2000,6 +2174,7 @@ export class RTCSignaler {
             }
             this.bumpCandidateCounter(this.candidateStats.localSent, candidateType)
             try {
+                const localRoleSessionId = this.getLocalRoleSessionId() ?? this.sessionId
                 // Include session marker so remote side can ignore stale ICE
                 // after reload/reconnect. Generation is kept only for debug.
                 const candidatePayload = {
@@ -2007,7 +2182,7 @@ export class RTCSignaler {
                     epoch: this.signalingEpoch,
                     pcGeneration: generation,
                     gen: generation,
-                    sessionId: this.sessionId ?? undefined,
+                    sessionId: localRoleSessionId ?? undefined,
                     icePhase: this.icePhase,
                 } as RTCIceCandidateInit & {
                     epoch: number
@@ -2018,7 +2193,7 @@ export class RTCSignaler {
                 }
                 if (!(await this.ensureOwnSlotActive('send-candidate'))) return
                 this.dbg.p('signaling-send:candidate', {
-                    sessionId: this.sessionId ?? null,
+                    sessionId: localRoleSessionId ?? null,
                     generation,
                     type: candidateType,
                     phase: this.icePhase,
@@ -2027,6 +2202,7 @@ export class RTCSignaler {
                     await this.streams.addCallerIceCandidate(candidatePayload)
                 else await this.streams.addCalleeIceCandidate(candidatePayload)
             } catch (e) {
+                if (await this.handleTakeoverWriteError('send-candidate', e)) return
                 this.onError(
                     this.raiseError(
                         e,
@@ -2041,14 +2217,15 @@ export class RTCSignaler {
         }
 
         this.pc.onnegotiationneeded = () => {
+            if (!this.isCurrentGeneration(generation)) return
+            if (this.takeoverStopping) return
+            if (!this.roomId || this.phase === 'closing' || this.phase === 'idle') return
             void this.publishOfferIfStable(generation, 'onnegotiationneeded')
         }
 
         if (this.role === 'caller') {
             // Fail-safe for very fast reload races where negotiationneeded can be missed.
-            setTimeout(() => {
-                void this.publishOfferIfStable(generation, 'bootstrap')
-            }, 0)
+            void this.publishOfferIfStable(generation, 'bootstrap')
         }
     }
 
@@ -2096,6 +2273,9 @@ export class RTCSignaler {
                     conn === 'failed' ||
                     conn === 'closed'
                 if (unhealthy) this.scheduleSoftThenMaybeHard()
+                if (this.role === 'caller') {
+                    this.scheduleCallerDcRecovery(this.pcGeneration, `dc-close:${ch.label}`)
+                }
             }
             if (reliable) this.onReliableClose()
             else this.onFastClose()
@@ -2152,6 +2332,17 @@ export class RTCSignaler {
         const timeoutMs = opts.timeoutMs ?? this.defaultWaitReadyTimeoutMs
         const start = Date.now()
         while (Date.now() - start < timeoutMs) {
+            if (this.takeoverStopping) {
+                throw this.raiseError(
+                    new Error('waitReady aborted after takeover'),
+                    RTCErrorCode.INVALID_STATE,
+                    'transport',
+                    false,
+                    'waitReady aborted after takeover',
+                    false,
+                    { inspect: this.inspect(), timeoutMs },
+                )
+            }
             const s = this.inspect()
             if (
                 s.pcState === 'connected' &&
@@ -2196,6 +2387,8 @@ export class RTCSignaler {
 
     private cleanupPeerOnly() {
         this.dbg.p('cleanupPeerOnly')
+        const hadPc = !!this.pc
+        if (hadPc) this.pcGeneration += 1
         this.clearLanFirstTimer()
         this.clearStunOnlyTimer()
         this.clearDcRecoveryTimer()

@@ -7,6 +7,7 @@ import type { IcePhase } from './connection-strategy'
 type SignalDescription = RTCSessionDescriptionInit & {
     epoch?: number
     sessionId?: string
+    forSessionId?: string
     pcGeneration?: number
     forPcGeneration?: number
     gen?: number
@@ -82,7 +83,7 @@ export function createSignalStreams(db: SignalDB) {
             (d) =>
                 ({
                     ...d,
-                    __h: `${d.epoch ?? -1}:${d.sessionId ?? 'n/a'}:${d.icePhase ?? 'n/a'}:${sdpHash(d.sdp ?? null)}`,
+                    __h: `${d.epoch ?? -1}:${d.sessionId ?? 'n/a'}:${d.forSessionId ?? 'n/a'}:${d.icePhase ?? 'n/a'}:${d.pcGeneration ?? -1}:${d.forPcGeneration ?? -1}:${d.gen ?? -1}:${d.forGen ?? -1}:${sdpHash(d.sdp ?? null)}`,
                 }) as SignalDescription & { __h: string },
         ),
         distinctUntilChanged((a, b) => a.__h === b.__h),
@@ -95,7 +96,7 @@ export function createSignalStreams(db: SignalDB) {
             (d) =>
                 ({
                     ...d,
-                    __h: `${d.epoch ?? -1}:${d.sessionId ?? 'n/a'}:${d.icePhase ?? 'n/a'}:${sdpHash(d.sdp ?? null)}`,
+                    __h: `${d.epoch ?? -1}:${d.sessionId ?? 'n/a'}:${d.forSessionId ?? 'n/a'}:${d.icePhase ?? 'n/a'}:${d.pcGeneration ?? -1}:${d.forPcGeneration ?? -1}:${d.gen ?? -1}:${d.forGen ?? -1}:${sdpHash(d.sdp ?? null)}`,
                 }) as SignalDescription & { __h: string },
         ),
         distinctUntilChanged((a, b) => a.__h === b.__h),

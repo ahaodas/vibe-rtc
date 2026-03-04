@@ -9,33 +9,39 @@ import {
     doc,
     getDoc,
     getDocs,
+    runTransaction,
+    serverTimestamp,
     setDoc,
     Timestamp,
     updateDoc,
 } from 'firebase/firestore'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, it } from 'vitest'
 import {
-    ALT_TOKEN_HASH,
+    ATTACKER_UID,
     buildAnswer,
+    buildCalleeParticipant,
+    buildCallerParticipant,
     buildCandidate,
+    buildLease,
     buildOffer,
     buildRoom,
+    buildTakeoverEvent,
+    CALLEE_SESSION,
     CALLEE_UID,
-    CALLER_TOKEN_HASH,
+    CALLER_SESSION,
     CALLER_UID,
     clearRulesData,
     createActors,
     createRulesEnv,
-    futureTs,
-    JOIN_TOKEN_HASH,
     makeRoomId,
-    pastTs,
     type RulesActors,
     seedCandidate,
+    seedLease,
+    seedParticipant,
     seedRoom,
 } from './helpers'
 
-describe.sequential('Firestore rules hardening', () => {
+describe.sequential('Firestore rules (path-based signaling)', () => {
     let env: RulesTestEnvironment
     let actors: RulesActors
 
@@ -53,462 +59,432 @@ describe.sequential('Firestore rules hardening', () => {
     })
 
     describe('A) happy-path', () => {
-        it('caller can create a room with valid shape and TTL <= 4h', async () => {
-            const roomId = makeRoomId('happy_create_room_001')
-            const roomRef = doc(actors.callerDb, 'rooms', roomId)
-
-            await assertSucceeds(
-                setDoc(roomRef, {
-                    ...buildRoom(),
-                    createdAt: Timestamp.fromMillis(Date.now()),
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                    expiresAt: futureTs(120),
-                }),
-            )
-
-            await assertSucceeds(getDoc(roomRef))
+        it('caller can create room root', async () => {
+            const roomId = makeRoomId('create_room_001')
+            await assertSucceeds(setDoc(doc(actors.callerDb, 'rooms', roomId), buildRoom()))
+            await assertSucceeds(getDoc(doc(actors.callerDb, 'rooms', roomId)))
         })
 
-        it('callee can claim only once', async () => {
-            const roomId = makeRoomId('happy_claim_once_001')
+        it('caller/callee can update their room slot with partial merge patch', async () => {
+            const roomId = makeRoomId('room_slot_update_001')
             await seedRoom(env, roomId, buildRoom())
-            const roomRefCallee = doc(actors.calleeDb, 'rooms', roomId)
 
-            await assertSucceeds(
-                updateDoc(roomRefCallee, {
-                    calleeTokenHash: JOIN_TOKEN_HASH,
-                    calleeUid: CALLEE_UID,
-                    slots: {
-                        caller: buildRoom().slots.caller,
-                        callee: {
-                            participantId: 'participant-callee-0001',
-                            sessionId: 'callee-session-0001',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                    },
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-
-            await assertFails(
-                updateDoc(roomRefCallee, {
-                    calleeTokenHash: ALT_TOKEN_HASH,
-                    calleeUid: CALLEE_UID,
-                    slots: {
-                        caller: buildRoom().slots.caller,
-                        callee: {
-                            participantId: 'participant-callee-0002',
-                            sessionId: 'callee-session-0002',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                    },
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-        })
-
-        it('caller can write offer with valid token proof', async () => {
-            const roomId = makeRoomId('happy_offer_001')
-            await seedRoom(env, roomId, buildRoom())
-            const roomRef = doc(actors.callerDb, 'rooms', roomId)
-
-            await assertSucceeds(
-                updateDoc(roomRef, {
-                    offer: buildOffer(),
-                    offerMeta: { tokenHash: CALLER_TOKEN_HASH, sessionId: 'caller-session-0001' },
-                    activeCallerSessionId: 'caller-session-0001',
-                    callerTokenProof: CALLER_TOKEN_HASH,
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-        })
-
-        it('callee can write answer after claim', async () => {
-            const roomId = makeRoomId('happy_answer_001')
-            await seedRoom(
-                env,
-                roomId,
-                buildRoom({
-                    calleeTokenHash: JOIN_TOKEN_HASH,
-                    calleeUid: CALLEE_UID,
-                    slots: {
-                        caller: buildRoom().slots.caller,
-                        callee: {
-                            participantId: 'participant-callee-0001',
-                            sessionId: 'callee-session-0001',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                    },
-                }),
-            )
-            const roomRef = doc(actors.calleeDb, 'rooms', roomId)
-
-            await assertSucceeds(
-                updateDoc(roomRef, {
-                    answer: buildAnswer(),
-                    answerMeta: { tokenHash: JOIN_TOKEN_HASH, sessionId: 'callee-session-0001' },
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-        })
-
-        it('caller can create callerCandidates caller-0..80', async () => {
-            const roomId = makeRoomId('happy_callercand_001')
-            await seedRoom(env, roomId, buildRoom())
-            const candRef = doc(actors.callerDb, 'rooms', roomId, 'callerCandidates', 'caller-0')
-            await assertSucceeds(setDoc(candRef, buildCandidate(CALLER_TOKEN_HASH)))
-        })
-
-        it('callee can create calleeCandidates callee-0..80', async () => {
-            const roomId = makeRoomId('happy_calleecand_001')
-            await seedRoom(
-                env,
-                roomId,
-                buildRoom({
-                    calleeTokenHash: JOIN_TOKEN_HASH,
-                    calleeUid: CALLEE_UID,
-                    slots: {
-                        caller: buildRoom().slots.caller,
-                        callee: {
-                            participantId: 'participant-callee-0001',
-                            sessionId: 'callee-session-0001',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                    },
-                }),
-            )
-            const candRef = doc(actors.calleeDb, 'rooms', roomId, 'calleeCandidates', 'callee-0')
             await assertSucceeds(
                 setDoc(
-                    candRef,
-                    buildCandidate(JOIN_TOKEN_HASH, { ownerSessionId: 'callee-session-0001' }),
+                    doc(actors.callerDb, 'rooms', roomId),
+                    {
+                        callerUid: CALLER_UID,
+                        updatedAt: Timestamp.fromMillis(Date.now()),
+                    },
+                    { merge: true },
+                ),
+            )
+
+            await assertSucceeds(
+                setDoc(
+                    doc(actors.calleeDb, 'rooms', roomId),
+                    {
+                        calleeUid: CALLEE_UID,
+                        updatedAt: Timestamp.fromMillis(Date.now()),
+                    },
+                    { merge: true },
                 ),
             )
         })
 
-        it('candidate update/delete are forbidden for all roles', async () => {
-            const roomId = makeRoomId('happy_candidate_immut_001')
+        it('caller can create own lease/participant/offer/candidates', async () => {
+            const roomId = makeRoomId('caller_flow_001')
             await seedRoom(env, roomId, buildRoom())
-            await seedCandidate(
+
+            await assertSucceeds(
+                setDoc(
+                    doc(actors.callerDb, 'rooms', roomId, 'leases', 'caller'),
+                    buildLease('caller', CALLER_UID, CALLER_SESSION, 1),
+                ),
+            )
+
+            await assertSucceeds(
+                setDoc(
+                    doc(actors.callerDb, 'rooms', roomId, 'callers', CALLER_UID),
+                    buildCallerParticipant({ offer: buildOffer(), answer: null }),
+                ),
+            )
+
+            await assertSucceeds(
+                setDoc(
+                    doc(
+                        actors.callerDb,
+                        'rooms',
+                        roomId,
+                        'callers',
+                        CALLER_UID,
+                        'candidates',
+                        'cand-1',
+                    ),
+                    buildCandidate({ sessionId: CALLER_SESSION }),
+                ),
+            )
+        })
+
+        it('callee can create own lease/participant/answer/candidates', async () => {
+            const roomId = makeRoomId('callee_flow_001')
+            await seedRoom(env, roomId, buildRoom())
+
+            await assertSucceeds(
+                setDoc(
+                    doc(actors.calleeDb, 'rooms', roomId, 'leases', 'callee'),
+                    buildLease('callee', CALLEE_UID, CALLEE_SESSION, 1),
+                ),
+            )
+
+            await assertSucceeds(
+                setDoc(
+                    doc(actors.calleeDb, 'rooms', roomId, 'callees', CALLEE_UID),
+                    buildCalleeParticipant({ answer: buildAnswer(), offer: null }),
+                ),
+            )
+
+            await assertSucceeds(
+                setDoc(
+                    doc(
+                        actors.calleeDb,
+                        'rooms',
+                        roomId,
+                        'callees',
+                        CALLEE_UID,
+                        'candidates',
+                        'cand-1',
+                    ),
+                    buildCandidate({ sessionId: CALLEE_SESSION }),
+                ),
+            )
+        })
+
+        it('participant create allows omitted optional offer/answer fields', async () => {
+            const roomId = makeRoomId('participant_optional_001')
+            await seedRoom(env, roomId, buildRoom())
+            const now = Timestamp.fromMillis(Date.now())
+
+            await assertSucceeds(
+                setDoc(doc(actors.callerDb, 'rooms', roomId, 'callers', CALLER_UID), {
+                    uid: CALLER_UID,
+                    role: 'caller',
+                    sessionId: CALLER_SESSION,
+                    active: true,
+                    createdAt: now,
+                    updatedAt: now,
+                }),
+            )
+
+            await assertSucceeds(
+                setDoc(doc(actors.calleeDb, 'rooms', roomId, 'callees', CALLEE_UID), {
+                    uid: CALLEE_UID,
+                    role: 'callee',
+                    sessionId: CALLEE_SESSION,
+                    active: true,
+                    createdAt: now,
+                    updatedAt: now,
+                }),
+            )
+        })
+
+        it('takeover lease update allows cross-uid owner switch with leaseVersion increment', async () => {
+            const roomId = makeRoomId('lease_takeover_001')
+            await seedRoom(env, roomId, buildRoom())
+            await seedLease(
                 env,
                 roomId,
-                'callerCandidates',
-                'caller-0',
-                buildCandidate(CALLER_TOKEN_HASH),
+                'caller',
+                buildLease('caller', CALLER_UID, CALLER_SESSION, 1),
             )
 
-            const candRef = doc(actors.callerDb, 'rooms', roomId, 'callerCandidates', 'caller-0')
-            await assertFails(
-                updateDoc(candRef, {
-                    candidate: 'candidate:tampered',
+            await assertSucceeds(
+                updateDoc(doc(actors.calleeDb, 'rooms', roomId, 'leases', 'caller'), {
+                    ownerUid: CALLEE_UID,
+                    ownerSessionId: 'callee-session-0002',
+                    leaseVersion: 2,
+                    updatedAt: Timestamp.fromMillis(Date.now()),
                 }),
             )
-            await assertFails(deleteDoc(candRef))
+
+            await assertFails(
+                updateDoc(doc(actors.calleeDb, 'rooms', roomId, 'leases', 'caller'), {
+                    ownerUid: CALLEE_UID,
+                    ownerSessionId: 'callee-session-0003',
+                    leaseVersion: 2,
+                    updatedAt: Timestamp.fromMillis(Date.now()),
+                }),
+            )
+        })
+
+        it('claimRole-like transaction succeeds with serverTimestamp and multi-write', async () => {
+            const roomId = makeRoomId('claim_role_tx_001')
+            const newSessionId = 'callee-session-tx-0001'
+            await seedRoom(env, roomId, buildRoom())
+            await seedLease(
+                env,
+                roomId,
+                'caller',
+                buildLease('caller', CALLER_UID, CALLER_SESSION, 1),
+            )
+            await seedParticipant(env, roomId, 'callers', CALLER_UID, buildCallerParticipant())
+
+            await assertSucceeds(
+                runTransaction(actors.calleeDb, async (tx) => {
+                    const roomRef = doc(actors.calleeDb, 'rooms', roomId)
+                    const leaseRef = doc(actors.calleeDb, 'rooms', roomId, 'leases', 'caller')
+                    const participantRef = doc(
+                        actors.calleeDb,
+                        'rooms',
+                        roomId,
+                        'callers',
+                        CALLEE_UID,
+                    )
+                    const takeoverEventRef = doc(
+                        actors.calleeDb,
+                        'rooms',
+                        roomId,
+                        'events',
+                        'evt-claim-role-tx-001',
+                    )
+
+                    const leaseSnap = await tx.get(leaseRef)
+                    const previousLease = leaseSnap.data() as { leaseVersion?: number } | undefined
+                    const nextLeaseVersion = (previousLease?.leaseVersion ?? 0) + 1
+
+                    tx.update(leaseRef, {
+                        role: 'caller',
+                        ownerUid: CALLEE_UID,
+                        ownerSessionId: newSessionId,
+                        leaseVersion: nextLeaseVersion,
+                        updatedAt: serverTimestamp(),
+                    })
+
+                    tx.set(participantRef, {
+                        uid: CALLEE_UID,
+                        role: 'caller',
+                        sessionId: newSessionId,
+                        active: true,
+                        createdAt: serverTimestamp(),
+                        updatedAt: serverTimestamp(),
+                    })
+
+                    tx.set(takeoverEventRef, {
+                        type: 'role_taken_over',
+                        role: 'caller',
+                        targetUid: CALLER_UID,
+                        targetSessionId: CALLER_SESSION,
+                        byUid: CALLEE_UID,
+                        bySessionId: newSessionId,
+                        createdAt: serverTimestamp(),
+                    })
+
+                    tx.update(roomRef, {
+                        callerUid: CALLEE_UID,
+                        updatedAt: serverTimestamp(),
+                    })
+                }),
+            )
+        })
+
+        it('events can be created by authenticated user with matching byUid', async () => {
+            const roomId = makeRoomId('event_create_001')
+            await seedRoom(env, roomId, buildRoom())
+
+            await assertSucceeds(
+                setDoc(
+                    doc(actors.calleeDb, 'rooms', roomId, 'events', 'evt-1'),
+                    buildTakeoverEvent({
+                        role: 'caller',
+                        targetUid: CALLER_UID,
+                        targetSessionId: CALLER_SESSION,
+                        byUid: CALLEE_UID,
+                        bySessionId: CALLEE_SESSION,
+                    }),
+                ),
+            )
         })
     })
 
-    describe('B) edge cases', () => {
-        it('create denied when expiresAt is in the past', async () => {
-            const roomId = makeRoomId('edge_expired_create_001')
-            const roomRef = doc(actors.callerDb, 'rooms', roomId)
-            await assertFails(
-                setDoc(roomRef, {
-                    ...buildRoom(),
-                    createdAt: Timestamp.fromMillis(Date.now()),
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                    expiresAt: pastTs(1),
-                }),
-            )
-        })
-
-        it('update denied when trying to extend expiresAt', async () => {
-            const roomId = makeRoomId('edge_extend_ttl_001')
-            await seedRoom(env, roomId, buildRoom({ expiresAt: futureTs(20) }))
-            const roomRef = doc(actors.callerDb, 'rooms', roomId)
-            await assertFails(
-                updateDoc(roomRef, {
-                    activeCallerSessionId: 'caller-session-ttl-extend',
-                    callerTokenProof: CALLER_TOKEN_HASH,
-                    callerUid: CALLER_UID,
-                    slots: {
-                        caller: {
-                            participantId: 'participant-caller-0001',
-                            sessionId: 'caller-session-ttl-extend',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                        callee: null,
-                    },
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                    expiresAt: futureTs(180),
-                }),
-            )
-        })
-
-        it('oversized SDP is denied (>20000)', async () => {
-            const roomId = makeRoomId('edge_oversized_sdp_001')
+    describe('B) security checks', () => {
+        it('cannot write participant under чужой uid path', async () => {
+            const roomId = makeRoomId('foreign_participant_001')
             await seedRoom(env, roomId, buildRoom())
-            const roomRef = doc(actors.callerDb, 'rooms', roomId)
+
             await assertFails(
-                updateDoc(roomRef, {
-                    offer: buildOffer('x'.repeat(20_001)),
-                    offerMeta: { tokenHash: CALLER_TOKEN_HASH, sessionId: 'caller-session-0001' },
-                    activeCallerSessionId: 'caller-session-0001',
-                    callerTokenProof: CALLER_TOKEN_HASH,
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
+                setDoc(
+                    doc(actors.attackerDb, 'rooms', roomId, 'callers', CALLER_UID),
+                    buildCallerParticipant({ uid: CALLER_UID }),
+                ),
             )
         })
 
-        it('candidateId outside bounds is denied', async () => {
-            const roomId = makeRoomId('edge_candidate_bounds_001')
+        it('cannot write candidate under чужой uid path', async () => {
+            const roomId = makeRoomId('foreign_candidate_001')
             await seedRoom(env, roomId, buildRoom())
-            const badIds = ['caller-81', 'caller-999', 'caller-random']
 
-            for (const candidateId of badIds) {
-                await assertFails(
-                    setDoc(
-                        doc(actors.callerDb, 'rooms', roomId, 'callerCandidates', candidateId),
-                        buildCandidate(CALLER_TOKEN_HASH),
+            await assertFails(
+                setDoc(
+                    doc(
+                        actors.attackerDb,
+                        'rooms',
+                        roomId,
+                        'callers',
+                        CALLER_UID,
+                        'candidates',
+                        'cand-1',
                     ),
-                )
-            }
+                    buildCandidate(),
+                ),
+            )
         })
 
-        it('immutable fields cannot be changed', async () => {
-            const roomId = makeRoomId('edge_immutable_room_001')
+        it('cannot write lease with ownerUid != request.auth.uid', async () => {
+            const roomId = makeRoomId('foreign_lease_001')
             await seedRoom(env, roomId, buildRoom())
-            const roomRef = doc(actors.callerDb, 'rooms', roomId)
 
             await assertFails(
-                updateDoc(roomRef, {
-                    callerTokenHash: ALT_TOKEN_HASH,
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-            await assertFails(
-                updateDoc(roomRef, {
-                    joinTokenHash: ALT_TOKEN_HASH,
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-            await assertFails(
-                updateDoc(roomRef, {
-                    createdAt: Timestamp.fromMillis(Date.now() + 1000),
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
+                setDoc(
+                    doc(actors.attackerDb, 'rooms', roomId, 'leases', 'caller'),
+                    buildLease('caller', CALLER_UID, CALLER_SESSION, 1),
+                ),
             )
         })
 
-        it('write operations are denied after expiresAt', async () => {
-            const roomId = makeRoomId('edge_write_after_expire_001')
-            await seedRoom(env, roomId, buildRoom({ expiresAt: pastTs(1) }))
-            const roomRef = doc(actors.callerDb, 'rooms', roomId)
-            await assertFails(
-                updateDoc(roomRef, {
-                    activeCallerSessionId: 'caller-session-expired',
-                    callerTokenProof: CALLER_TOKEN_HASH,
-                    callerUid: CALLER_UID,
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-        })
-    })
-
-    describe('C) attacking scenarios', () => {
-        it('list rooms is denied', async () => {
-            const roomId = makeRoomId('attack_list_rooms_001')
+        it('cannot write events when byUid != request.auth.uid', async () => {
+            const roomId = makeRoomId('foreign_event_001')
             await seedRoom(env, roomId, buildRoom())
+
+            await assertFails(
+                setDoc(
+                    doc(actors.attackerDb, 'rooms', roomId, 'events', 'evt-1'),
+                    buildTakeoverEvent({
+                        byUid: CALLER_UID,
+                        bySessionId: CALLER_SESSION,
+                    }),
+                ),
+            )
+        })
+
+        it('cannot write role-mismatched participant payload', async () => {
+            const roomId = makeRoomId('role_mismatch_001')
+            await seedRoom(env, roomId, buildRoom())
+
+            await assertFails(
+                setDoc(
+                    doc(actors.callerDb, 'rooms', roomId, 'callers', CALLER_UID),
+                    buildCallerParticipant({ role: 'callee' }),
+                ),
+            )
+        })
+
+        it('cannot read signaling docs unauthenticated', async () => {
+            const roomId = makeRoomId('unauth_read_001')
+            await seedRoom(env, roomId, buildRoom())
+            await seedParticipant(
+                env,
+                roomId,
+                'callers',
+                CALLER_UID,
+                buildCallerParticipant({ offer: buildOffer() }),
+            )
+            await seedCandidate(env, roomId, 'callers', CALLER_UID, 'cand-1', buildCandidate())
+
+            await assertFails(getDoc(doc(actors.unauthenticatedDb, 'rooms', roomId)))
+            await assertFails(
+                getDoc(doc(actors.unauthenticatedDb, 'rooms', roomId, 'callers', CALLER_UID)),
+            )
+            await assertFails(
+                getDoc(
+                    doc(
+                        actors.unauthenticatedDb,
+                        'rooms',
+                        roomId,
+                        'callers',
+                        CALLER_UID,
+                        'candidates',
+                        'cand-1',
+                    ),
+                ),
+            )
+            await assertFails(
+                getDoc(doc(actors.unauthenticatedDb, 'rooms', roomId, 'leases', 'caller')),
+            )
+            await assertFails(
+                getDoc(doc(actors.unauthenticatedDb, 'rooms', roomId, 'events', 'evt-1')),
+            )
+        })
+
+        it('list rooms is denied for authenticated users', async () => {
+            const roomId = makeRoomId('list_rooms_denied_001')
+            await seedRoom(env, roomId, buildRoom())
+            await assertFails(getDocs(collection(actors.callerDb, 'rooms')))
             await assertFails(getDocs(collection(actors.attackerDb, 'rooms')))
         })
 
-        it('attacker cannot claim callee when already occupied', async () => {
-            const roomId = makeRoomId('attack_hijack_callee_001')
-            await seedRoom(
-                env,
-                roomId,
-                buildRoom({
-                    calleeTokenHash: JOIN_TOKEN_HASH,
-                    calleeUid: CALLEE_UID,
-                    slots: {
-                        caller: buildRoom().slots.caller,
-                        callee: {
-                            participantId: 'participant-callee-0001',
-                            sessionId: 'callee-session-0001',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                    },
-                }),
-            )
+        it('attacker cannot delete room root owned by caller', async () => {
+            const roomId = makeRoomId('room_delete_denied_001')
+            await seedRoom(env, roomId, buildRoom())
+            await assertFails(deleteDoc(doc(actors.attackerDb, 'rooms', roomId)))
+        })
+
+        it('attacker uid cannot impersonate caller participant update', async () => {
+            const roomId = makeRoomId('participant_update_denied_001')
+            await seedRoom(env, roomId, buildRoom())
+            await seedParticipant(env, roomId, 'callers', CALLER_UID, buildCallerParticipant())
 
             await assertFails(
-                updateDoc(doc(actors.attackerDb, 'rooms', roomId), {
-                    calleeTokenHash: ALT_TOKEN_HASH,
-                    calleeUid: 'uid-attacker',
-                    slots: {
-                        caller: buildRoom().slots.caller,
-                        callee: {
-                            participantId: 'participant-attacker-0001',
-                            sessionId: 'callee-session-attacker',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                    },
+                updateDoc(doc(actors.attackerDb, 'rooms', roomId, 'callers', CALLER_UID), {
+                    active: false,
                     updatedAt: Timestamp.fromMillis(Date.now()),
                 }),
             )
         })
 
-        it('attacker cannot tamper offer/answer without token proof', async () => {
-            const roomId = makeRoomId('attack_tamper_offer_answer_001')
-            await seedRoom(
-                env,
-                roomId,
-                buildRoom({
-                    calleeTokenHash: JOIN_TOKEN_HASH,
-                    calleeUid: CALLEE_UID,
-                    slots: {
-                        caller: buildRoom().slots.caller,
-                        callee: {
-                            participantId: 'participant-callee-0001',
-                            sessionId: 'callee-session-0001',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                    },
-                }),
-            )
-
-            const attackerRoomRef = doc(actors.attackerDb, 'rooms', roomId)
-            await assertFails(
-                updateDoc(attackerRoomRef, {
-                    offer: buildOffer('malicious offer'),
-                    offerMeta: { tokenHash: ALT_TOKEN_HASH, sessionId: 'attacker-sess' },
-                    activeCallerSessionId: 'attacker-sess',
-                    callerTokenProof: ALT_TOKEN_HASH,
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-
-            await assertFails(
-                updateDoc(attackerRoomRef, {
-                    answer: buildAnswer('malicious answer'),
-                    answerMeta: { tokenHash: ALT_TOKEN_HASH, sessionId: 'attacker-sess' },
-                    updatedAt: Timestamp.fromMillis(Date.now()),
-                }),
-            )
-        })
-
-        it('attacker cannot write caller/callee candidates', async () => {
-            const roomId = makeRoomId('attack_candidates_inject_001')
-            await seedRoom(
-                env,
-                roomId,
-                buildRoom({
-                    calleeTokenHash: JOIN_TOKEN_HASH,
-                    calleeUid: CALLEE_UID,
-                    slots: {
-                        caller: buildRoom().slots.caller,
-                        callee: {
-                            participantId: 'participant-callee-0001',
-                            sessionId: 'callee-session-0001',
-                            joinedAt: Date.now(),
-                            lastSeenAt: Date.now(),
-                        },
-                    },
-                }),
-            )
-
-            await assertFails(
-                setDoc(
-                    doc(actors.attackerDb, 'rooms', roomId, 'callerCandidates', 'caller-0'),
-                    buildCandidate(ALT_TOKEN_HASH),
-                ),
-            )
-            await assertFails(
-                setDoc(
-                    doc(actors.attackerDb, 'rooms', roomId, 'calleeCandidates', 'callee-0'),
-                    buildCandidate(ALT_TOKEN_HASH, { ownerSessionId: 'callee-session-0001' }),
-                ),
-            )
-        })
-
-        it('candidate flood beyond 0..80 is denied even for valid caller', async () => {
-            const roomId = makeRoomId('attack_candidate_flood_001')
+        it('oversized SDP payload is denied in participant doc', async () => {
+            const roomId = makeRoomId('oversized_sdp_001')
             await seedRoom(env, roomId, buildRoom())
 
             await assertFails(
                 setDoc(
-                    doc(actors.attackerDb, 'rooms', roomId, 'callerCandidates', 'caller-0'),
-                    buildCandidate(ALT_TOKEN_HASH),
+                    doc(actors.callerDb, 'rooms', roomId, 'callers', CALLER_UID),
+                    buildCallerParticipant({
+                        offer: buildOffer('x'.repeat(20_001)),
+                    }),
                 ),
             )
+        })
 
-            for (let i = 0; i <= 80; i++) {
-                await assertSucceeds(
-                    setDoc(
-                        doc(actors.callerDb, 'rooms', roomId, 'callerCandidates', `caller-${i}`),
-                        buildCandidate(CALLER_TOKEN_HASH),
-                    ),
-                )
-            }
+        it('attacker cannot read/write another user signaling branches', async () => {
+            const roomId = makeRoomId('attacker_scope_001')
+            await seedRoom(env, roomId, buildRoom())
+            await seedLease(
+                env,
+                roomId,
+                'caller',
+                buildLease('caller', CALLER_UID, CALLER_SESSION, 1),
+            )
+            await seedParticipant(
+                env,
+                roomId,
+                'callers',
+                CALLER_UID,
+                buildCallerParticipant({ offer: buildOffer() }),
+            )
+
+            await assertSucceeds(
+                getDoc(doc(actors.attackerDb, 'rooms', roomId, 'leases', 'caller')),
+            )
+            await assertSucceeds(
+                getDoc(doc(actors.attackerDb, 'rooms', roomId, 'callers', CALLER_UID)),
+            )
 
             await assertFails(
                 setDoc(
-                    doc(actors.callerDb, 'rooms', roomId, 'callerCandidates', 'caller-81'),
-                    buildCandidate(CALLER_TOKEN_HASH),
+                    doc(actors.attackerDb, 'rooms', roomId, 'callers', CALLER_UID),
+                    buildCallerParticipant({ uid: ATTACKER_UID }),
                 ),
             )
-        })
-
-        it('existing candidate doc cannot be modified', async () => {
-            const roomId = makeRoomId('attack_modify_candidate_001')
-            await seedRoom(env, roomId, buildRoom())
-            await seedCandidate(
-                env,
-                roomId,
-                'callerCandidates',
-                'caller-0',
-                buildCandidate(CALLER_TOKEN_HASH),
-            )
-
-            await assertFails(
-                updateDoc(doc(actors.attackerDb, 'rooms', roomId, 'callerCandidates', 'caller-0'), {
-                    candidate: 'candidate:attacker',
-                }),
-            )
-        })
-
-        it('room and candidates reads are denied after expiresAt', async () => {
-            const roomId = makeRoomId('attack_read_after_expire_001')
-            await seedRoom(
-                env,
-                roomId,
-                buildRoom({
-                    expiresAt: pastTs(1),
-                }),
-            )
-            await seedCandidate(
-                env,
-                roomId,
-                'callerCandidates',
-                'caller-0',
-                buildCandidate(CALLER_TOKEN_HASH),
-            )
-
-            await assertFails(getDoc(doc(actors.callerDb, 'rooms', roomId)))
-            await assertFails(
-                getDoc(doc(actors.callerDb, 'rooms', roomId, 'callerCandidates', 'caller-0')),
-            )
-            await assertFails(
-                getDocs(collection(actors.callerDb, 'rooms', roomId, 'callerCandidates')),
-            )
-            await assertFails(getDoc(doc(actors.unauthenticatedDb, 'rooms', roomId)))
         })
     })
 })

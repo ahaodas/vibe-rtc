@@ -5,8 +5,11 @@ export type OfferSDP = {
     sdp: string
     epoch?: number
     sessionId?: string
+    forSessionId?: string
     pcGeneration?: number
+    forPcGeneration?: number
     gen?: number
+    forGen?: number
     icePhase?: IcePhase
 }
 export type AnswerSDP = {
@@ -14,6 +17,7 @@ export type AnswerSDP = {
     sdp: string
     epoch?: number
     sessionId?: string
+    forSessionId?: string
     pcGeneration?: number
     forPcGeneration?: number
     gen?: number

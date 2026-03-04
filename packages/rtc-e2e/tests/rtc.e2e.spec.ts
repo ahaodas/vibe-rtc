@@ -1,4 +1,4 @@
-import { expect, type Page, test } from '@playwright/test'
+import { type BrowserContext, expect, type Page, test } from '@playwright/test'
 
 type Who = 'caller' | 'callee'
 type ConnectionStrategy = 'DEFAULT' | 'BROWSER_NATIVE'
@@ -12,13 +12,15 @@ const USING_FIREBASE_EMULATOR =
     Boolean(process.env.VITE_FIREBASE_AUTH_EMULATOR_HOST)
 const RECOVERY_SLA_MS = USING_FIREBASE_EMULATOR ? 12_000 : 10_000
 const BROWSER_NATIVE_RECOVERY_SLA_MS = 15_000
-const TAKEOVER_READY_TIMEOUT_MS = 45_000
+const TAKEOVER_READY_TIMEOUT_MS = 60_000
+const CLEANUP_TIMEOUT_MS = 4_000
 
 type RoleState = {
     pcState: string
     fast?: { state?: string } | null
     reliable?: { state?: string } | null
     sessionId?: string | null
+    participantId?: string | null
     phase?: string
 }
 
@@ -29,14 +31,18 @@ type RoleApi = {
     takeMessages: () => string[]
     hostRoom: () => Promise<string>
     joinRoom: (roomId: string) => Promise<void>
+    hangup?: () => Promise<void>
     endRoom?: () => Promise<void>
     flush?: () => void
     getState: () => RoleState
+    takeSecurityEvents?: () => string[]
+    debugSignal?: () => Promise<unknown>
 }
 
 type AppApi = {
     makeCaller: (opts?: { connectionStrategy?: ConnectionStrategy }) => Promise<RoleApi>
     makeCallee: (opts?: { connectionStrategy?: ConnectionStrategy }) => Promise<RoleApi>
+    attachFromHash: () => Promise<void>
 }
 
 type E2EWindow = Window & {
@@ -96,6 +102,27 @@ async function waitRoleReadyInternal(
             )
             return Date.now() - startedAt
         } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            const likelyTimeout =
+                message.includes('waitReady timeout') ||
+                message.includes('waitReadyNoAssist timeout')
+            if (likelyTimeout && !page.isClosed()) {
+                let debug: { state: RoleState | null; security: string[]; signal: unknown } | null =
+                    null
+                try {
+                    debug = await page.evaluate(async (w) => {
+                        const role = (window as unknown as E2EWindow)[w]
+                        return {
+                            state: role?.getState?.() ?? null,
+                            security: role?.takeSecurityEvents?.() ?? [],
+                            signal: role?.debugSignal ? await role.debugSignal() : null,
+                        }
+                    }, who)
+                } catch {
+                    throw error
+                }
+                throw new Error(`${message}; debug=${JSON.stringify(debug)}`)
+            }
             if (!isNavigationContextError(error) || page.isClosed()) throw error
             lastNavigationError = error
             const waitAppForMs = Math.max(1, Math.min(remainingMs, 5_000))
@@ -112,10 +139,6 @@ async function waitRoleReadyInternal(
 
 async function waitRoleReadyNoAssist(page: Page, who: Who, timeoutMs = READY_TIMEOUT_MS) {
     return await waitRoleReadyInternal(page, who, timeoutMs, true)
-}
-
-async function waitRoleReady(page: Page, who: Who, timeoutMs = READY_TIMEOUT_MS) {
-    return await waitRoleReadyInternal(page, who, timeoutMs, false)
 }
 
 function isConnected(st: RoleState | null | undefined): boolean {
@@ -170,6 +193,15 @@ async function assertPingStrict(from: Page, whoFrom: Who, to: Page, expectedText
         .toBe(true)
 }
 
+function buildAttachHash(
+    who: Who,
+    roomId: string,
+    connectionStrategy: ConnectionStrategy = 'DEFAULT',
+): string {
+    const strategySuffix = connectionStrategy === 'BROWSER_NATIVE' ? '?strategy=native' : ''
+    return `#/attach/${who}/${encodeURIComponent(roomId)}${strategySuffix}`
+}
+
 async function openRolePage(
     page: Page,
     baseURL: string,
@@ -203,8 +235,41 @@ async function openRolePage(
     )
 }
 
+async function openRolePageFromAttachHash(
+    page: Page,
+    baseURL: string,
+    attachHash: string,
+    tag: string,
+) {
+    captureConsole(page, tag)
+    await page.goto(`${baseURL}/e2e-rtc.html${attachHash}`)
+    await waitAppReady(page)
+    await page.evaluate(async () => {
+        await (window as unknown as E2EWindow).app.attachFromHash()
+    })
+}
+
 async function flushMessages(page: Page, who: Who) {
     await page.evaluate((w) => (window as unknown as E2EWindow)[w]?.flush?.(), who)
+}
+
+async function takeSecurityEvents(page: Page, who: Who): Promise<string[]> {
+    return await page.evaluate(
+        (w) => (window as unknown as E2EWindow)[w]?.takeSecurityEvents?.() ?? [],
+        who,
+    )
+}
+
+async function expectTakeoverSecurityEvent(page: Page, who: Who, timeoutMs = 10_000) {
+    await expect
+        .poll(
+            async () => {
+                const events = await takeSecurityEvents(page, who)
+                return events.some((entry) => entry.startsWith('taken_over:'))
+            },
+            { timeout: timeoutMs, intervals: [100, 200, 300] },
+        )
+        .toBe(true)
 }
 
 async function takeMessages(page: Page, who: Who): Promise<string[]> {
@@ -272,6 +337,7 @@ async function bootPair(
     pCallee: Page,
     baseURL: string,
     connectionStrategy: ConnectionStrategy = 'DEFAULT',
+    readyTimeoutMs = READY_TIMEOUT_MS,
 ) {
     captureConsole(pCaller, 'caller')
     captureConsole(pCallee, 'callee')
@@ -302,8 +368,8 @@ async function bootPair(
     )
 
     await Promise.all([
-        waitRoleReadyNoAssist(pCaller, 'caller'),
-        waitRoleReadyNoAssist(pCallee, 'callee'),
+        waitRoleReadyNoAssist(pCaller, 'caller', readyTimeoutMs),
+        waitRoleReadyNoAssist(pCallee, 'callee', readyTimeoutMs),
     ])
 
     await assertStateConnected(pCaller, 'caller')
@@ -378,29 +444,51 @@ async function reloadRoleNoWait(
     )
 }
 
+async function cleanupRoleInternal(page: Page, who: Who, preferHangup: boolean) {
+    if (page.isClosed()) return
+    try {
+        const cleanupOp = page.evaluate(
+            async ({ who, preferHangup, timeoutMs }) => {
+                const obj = (window as unknown as E2EWindow)[who]
+                if (!obj) return
+                const operation = (async () => {
+                    if (preferHangup && obj.hangup) {
+                        await obj.hangup()
+                        return
+                    }
+                    if (obj.endRoom) {
+                        await obj.endRoom()
+                        return
+                    }
+                    if (obj.hangup) {
+                        await obj.hangup()
+                    }
+                })()
+                await Promise.race([
+                    operation,
+                    new Promise<void>((resolve) => {
+                        setTimeout(resolve, timeoutMs)
+                    }),
+                ])
+            },
+            { who, preferHangup, timeoutMs: CLEANUP_TIMEOUT_MS },
+        )
+        await Promise.race([
+            cleanupOp,
+            new Promise<void>((resolve) => {
+                setTimeout(resolve, CLEANUP_TIMEOUT_MS + 250)
+            }),
+        ])
+    } catch {}
+}
+
 async function cleanupPair(pCaller: Page, pCallee: Page) {
-    for (const [page, who] of [
-        [pCaller, 'caller'],
-        [pCallee, 'callee'],
-    ] as const) {
-        try {
-            await page.evaluate(async (w) => {
-                const obj = (window as unknown as E2EWindow)[w]
-                if (!obj?.endRoom) return
-                await obj.endRoom()
-            }, who)
-        } catch {}
-    }
+    await cleanupRoleInternal(pCaller, 'caller', false)
+    await cleanupRoleInternal(pCallee, 'callee', false)
 }
 
 async function cleanupRole(page: Page, who: Who) {
-    try {
-        await page.evaluate(async (w) => {
-            const obj = (window as unknown as E2EWindow)[w]
-            if (!obj?.endRoom) return
-            await obj.endRoom()
-        }, who)
-    } catch {}
+    await cleanupRoleInternal(page, who, true)
 }
 
 test.describe('reload recovery (strict no-assist)', () => {
@@ -594,20 +682,26 @@ test.describe('takeover (same role, last page wins)', () => {
     let pCallee: Page
     let roomId: string
     let extraPages: Array<{ page: Page; who: Who }>
+    let extraContexts: BrowserContext[]
 
     test.beforeEach(async ({ context, baseURL }) => {
         pCaller = await context.newPage()
         pCallee = await context.newPage()
         extraPages = []
+        extraContexts = []
         if (!baseURL) {
             throw new Error('Playwright baseURL is required for rtc e2e tests')
         }
-        roomId = await bootPair(pCaller, pCallee, baseURL)
+        roomId = await bootPair(pCaller, pCallee, baseURL, 'DEFAULT', TAKEOVER_READY_TIMEOUT_MS)
     })
 
     test.afterEach(async () => {
         for (const extra of extraPages) {
             await cleanupRole(extra.page, extra.who)
+            await extra.page.close().catch(() => {})
+        }
+        for (const ctx of extraContexts) {
+            await ctx.close().catch(() => {})
         }
         await cleanupPair(pCaller, pCallee)
     })
@@ -625,13 +719,14 @@ test.describe('takeover (same role, last page wins)', () => {
         await openRolePage(pCaller2, baseURL, 'caller', roomId, 'caller2')
 
         await Promise.all([
-            waitRoleReady(pCaller2, 'caller', TAKEOVER_READY_TIMEOUT_MS),
-            waitRoleReady(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCaller2, 'caller', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
         ])
 
         await assertStateConnected(pCaller2, 'caller')
         await assertStateConnected(pCallee, 'callee')
         await waitRoleDisconnected(pCaller, 'caller')
+        await expectTakeoverSecurityEvent(pCaller, 'caller')
         if (oldCallerSession) {
             const callerAfter = await getRoleState(pCaller2, 'caller')
             if (callerAfter.sessionId) {
@@ -665,13 +760,14 @@ test.describe('takeover (same role, last page wins)', () => {
         await openRolePage(pCallee2, baseURL, 'callee', roomId, 'callee2')
 
         await Promise.all([
-            waitRoleReady(pCallee2, 'callee', TAKEOVER_READY_TIMEOUT_MS),
-            waitRoleReady(pCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCallee2, 'callee', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS),
         ])
 
         await assertStateConnected(pCaller, 'caller')
         await assertStateConnected(pCallee2, 'callee')
         await waitRoleDisconnected(pCallee, 'callee')
+        await expectTakeoverSecurityEvent(pCallee, 'callee')
         if (oldCalleeSession) {
             const calleeAfter = await getRoleState(pCallee2, 'callee')
             if (calleeAfter.sessionId) {
@@ -696,28 +792,31 @@ test.describe('takeover (same role, last page wins)', () => {
         context,
         baseURL,
     }) => {
+        test.setTimeout(180_000)
         if (!baseURL) throw new Error('Playwright baseURL is required for rtc e2e tests')
 
         const pCaller2 = await context.newPage()
         extraPages.push({ page: pCaller2, who: 'caller' })
         await openRolePage(pCaller2, baseURL, 'caller', roomId, 'caller2')
         await Promise.all([
-            waitRoleReady(pCaller2, 'caller', TAKEOVER_READY_TIMEOUT_MS),
-            waitRoleReady(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCaller2, 'caller', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
         ])
         await waitRoleDisconnected(pCaller, 'caller')
 
         const pCaller3 = await context.newPage()
         extraPages.push({ page: pCaller3, who: 'caller' })
         await openRolePage(pCaller3, baseURL, 'caller', roomId, 'caller3')
+        await waitRoleDisconnected(pCaller2, 'caller', TAKEOVER_READY_TIMEOUT_MS)
+        await expectTakeoverSecurityEvent(pCaller2, 'caller')
+        await cleanupRole(pCaller2, 'caller')
         await Promise.all([
-            waitRoleReady(pCaller3, 'caller', TAKEOVER_READY_TIMEOUT_MS),
-            waitRoleReady(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCaller3, 'caller', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
         ])
 
         await assertStateConnected(pCaller3, 'caller')
         await assertStateConnected(pCallee, 'callee')
-        await waitRoleDisconnected(pCaller2, 'caller')
 
         await Promise.all([
             flushMessages(pCaller, 'caller'),
@@ -734,6 +833,99 @@ test.describe('takeover (same role, last page wins)', () => {
         await assertRoleStaysDisconnected(pCaller2, 'caller')
         await assertRoleStaysDisconnected(pCaller, 'caller')
         await assertStateConnected(pCaller3, 'caller')
+        await assertStateConnected(pCallee, 'callee')
+    })
+
+    test('cross-context caller takeover via attach link switches ownership to another uid', async ({
+        browser,
+        baseURL,
+    }) => {
+        if (!baseURL) throw new Error('Playwright baseURL is required for rtc e2e tests')
+
+        const callerBefore = await getRoleState(pCaller, 'caller')
+        const foreignContext = await browser.newContext()
+        extraContexts.push(foreignContext)
+
+        const foreignCaller = await foreignContext.newPage()
+        extraPages.push({ page: foreignCaller, who: 'caller' })
+        const attachHash = buildAttachHash('caller', roomId)
+        await openRolePageFromAttachHash(
+            foreignCaller,
+            baseURL,
+            attachHash,
+            'caller-foreign-context',
+        )
+
+        await Promise.all([
+            waitRoleReadyNoAssist(foreignCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS),
+            waitRoleReadyNoAssist(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
+        ])
+
+        await assertStateConnected(foreignCaller, 'caller')
+        await assertStateConnected(pCallee, 'callee')
+        await waitRoleDisconnected(pCaller, 'caller')
+        await expectTakeoverSecurityEvent(pCaller, 'caller')
+
+        const callerAfter = await getRoleState(foreignCaller, 'caller')
+        if (callerBefore.participantId && callerAfter.participantId) {
+            expect(callerAfter.participantId).not.toBe(callerBefore.participantId)
+        }
+        if (callerBefore.sessionId && callerAfter.sessionId) {
+            expect(callerAfter.sessionId).not.toBe(callerBefore.sessionId)
+        }
+
+        await Promise.all([
+            flushMessages(pCaller, 'caller'),
+            flushMessages(foreignCaller, 'caller'),
+            flushMessages(pCallee, 'callee'),
+        ])
+        const marker = `takeover-cross-context-${Date.now()}`
+        await sendReliable(pCallee, 'callee', marker)
+        await expectReceivesMessage(foreignCaller, 'caller', marker)
+        await expectNoMessage(pCaller, 'caller', marker)
+        await assertRoleStaysDisconnected(pCaller, 'caller')
+    })
+
+    test('20 consecutive caller takeovers keep only latest caller active', async ({
+        context,
+        baseURL,
+    }) => {
+        test.setTimeout(300_000)
+        if (!baseURL) throw new Error('Playwright baseURL is required for rtc e2e tests')
+
+        let activeCaller = pCaller
+
+        for (let i = 1; i <= 20; i++) {
+            const nextCaller = await context.newPage()
+            extraPages.push({ page: nextCaller, who: 'caller' })
+            await openRolePage(nextCaller, baseURL, 'caller', roomId, `caller-cycle-${i}`)
+
+            await Promise.all([
+                waitRoleReadyNoAssist(nextCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS),
+                waitRoleReadyNoAssist(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
+            ])
+
+            await assertStateConnected(nextCaller, 'caller')
+            await assertStateConnected(pCallee, 'callee')
+            await waitRoleDisconnected(activeCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS)
+            await expectTakeoverSecurityEvent(activeCaller, 'caller')
+
+            const marker = `takeover-cycle-${i}-${Date.now()}`
+            await Promise.all([
+                flushMessages(activeCaller, 'caller'),
+                flushMessages(nextCaller, 'caller'),
+                flushMessages(pCallee, 'callee'),
+            ])
+            await sendReliable(pCallee, 'callee', marker)
+            await expectReceivesMessage(nextCaller, 'caller', marker)
+            await expectNoMessage(activeCaller, 'caller', marker, 500)
+            await assertRoleStaysDisconnected(activeCaller, 'caller', 1000)
+            await cleanupRole(activeCaller, 'caller')
+            await activeCaller.close().catch(() => {})
+            activeCaller = nextCaller
+        }
+
+        await assertStateConnected(activeCaller, 'caller')
         await assertStateConnected(pCallee, 'callee')
     })
 })

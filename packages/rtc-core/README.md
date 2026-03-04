@@ -93,7 +93,9 @@ With `connectionStrategy: "BROWSER_NATIVE"`:
 
 - adapter marks each role slot with `participantId` + `sessionId`
 - any incoming offer/answer/candidate with foreign `sessionId` is ignored as stale
-- if current role slot owner (`participantId`) changes, active signaler stops and raises an error (`INVALID_STATE`, message includes `takeover detected`)
+- if current role slot owner changes (`participantId` mismatch) active signaler stops with `INVALID_STATE` (`takeover detected`)
+- if role slot keeps same participant but `sessionId` changes, it is also treated as takeover (stale tab / old session)
+- during takeover shutdown `hangup()` skips best-effort `signalDb.leaveRoom()` write to avoid stale-tab writes
 
 This prevents old tabs from corrupting signaling state after takeover/reload.
 

@@ -612,7 +612,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         expect(FakeRTCPeerConnection.instances.length).toBe(3)
     })
 
-    it('caller ignores stale answers by sessionId marker', async () => {
+    it('caller ignores stale answers by forSessionId marker', async () => {
         vi.useFakeTimers()
         vi.stubGlobal(
             'RTCPeerConnection',
@@ -658,7 +658,8 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         answerCb?.({
             type: 'answer',
             sdp: 'v=0\r\no=callee stale 1 1 IN IP4 0.0.0.0\r\n',
-            sessionId: 'stale-session',
+            sessionId: 'callee-session-stale',
+            forSessionId: 'stale-session',
         })
         await vi.advanceTimersByTimeAsync(1)
         expect(setRemoteSpy.mock.calls.length).toBe(baselineCalls)
@@ -666,7 +667,8 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         answerCb?.({
             type: 'answer',
             sdp: 'v=0\r\no=callee fresh 2 2 IN IP4 0.0.0.0\r\n',
-            sessionId: currentSessionId,
+            sessionId: 'callee-session-fresh',
+            forSessionId: currentSessionId,
         })
         await vi.advanceTimersByTimeAsync(1)
         expect(setRemoteSpy.mock.calls.length).toBe(baselineCalls + 1)

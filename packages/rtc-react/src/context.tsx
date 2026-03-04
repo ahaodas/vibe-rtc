@@ -401,23 +401,26 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
                         }
                         const roomWithSlots = room as typeof room & {
                             slots?: {
-                                caller?: { participantId: string } | null
-                                callee?: { participantId: string } | null
+                                caller?: { participantId: string; sessionId?: string } | null
+                                callee?: { participantId: string; sessionId?: string } | null
                             }
                         }
                         const myParticipantId =
                             dbWithPresence.getParticipantId?.() ??
                             signalerWithParticipant.currentParticipantId ??
                             null
+                        const mySessionId = dbWithPresence.getRoleSessionId?.(role) ?? null
                         const roleSlot =
                             role === 'caller'
                                 ? roomWithSlots.slots?.caller
                                 : roomWithSlots.slots?.callee
-                        if (
+                        const participantMismatch =
                             myParticipantId &&
                             roleSlot?.participantId &&
                             roleSlot.participantId !== myParticipantId
-                        ) {
+                        const sessionMismatch =
+                            mySessionId && roleSlot?.sessionId && roleSlot.sessionId !== mySessionId
+                        if (participantMismatch || sessionMismatch) {
                             alive = false
                             roomWatchStopRef.current = null
                             await disposeSignaler()

@@ -165,6 +165,13 @@ Firestore rules and Firebase config are versioned in `packages/rtc-firebase`:
 - `packages/rtc-firebase/firestore.indexes.json`
 - `packages/rtc-firebase/firebase.json`
 
+Path-based signaling layout used by `@vibe-rtc/rtc-firebase`:
+
+- `rooms/{roomId}/leases/{role}`
+- `rooms/{roomId}/callers/{uid}` and `rooms/{roomId}/callees/{uid}`
+- `rooms/{roomId}/{role}s/{uid}/candidates/{candidateId}`
+- `rooms/{roomId}/events/{eventId}` for takeover notifications
+
 Deploy rules:
 
 ```bash

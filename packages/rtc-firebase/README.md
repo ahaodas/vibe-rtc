@@ -30,27 +30,46 @@ const signalDb = new FBAdapter(db, auth)
 const rtc = new RTCSignaler('caller', signalDb)
 ```
 
-## Takeover Semantics (Same Role / Multi-Tab)
+## Signaling Schema (Path-Based)
 
-`FBAdapter` implements role-slot takeover with "last join wins":
+Adapter stores signaling data under role/uid paths:
 
-- each browser tab has adapter-level `participantId`
-- on `joinRoom(id, role)` adapter writes/updates `rooms/{roomId}.slots[role]` with:
-  - `participantId`
-  - `sessionId` (new on takeover/join)
-  - `joinedAt`, `lastSeenAt`
-- signaling documents (`offer`, `answer`, ICE candidates) carry `sessionId`
+- `rooms/{roomId}/callers/{uid}`
+- `rooms/{roomId}/callees/{uid}`
+- `rooms/{roomId}/callers/{uid}/candidates/{candidateId}`
+- `rooms/{roomId}/callees/{uid}/candidates/{candidateId}`
+- `rooms/{roomId}/leases/{role}` where `role in ['caller', 'callee']`
+- `rooms/{roomId}/events/{eventId}` for takeover notifications
 
-Room schema fragment:
+`offer` is written to caller participant doc, `answer` to callee participant doc.
+ICE candidates are written to role-local candidate branches and flushed in 100ms batches.
 
-```ts
-slots: {
-  caller?: { participantId: string; sessionId: string; joinedAt: number; lastSeenAt: number } | null
-  callee?: { participantId: string; sessionId: string; joinedAt: number; lastSeenAt: number } | null
-}
-```
+## Takeover Semantics (Last Join Wins)
 
-This lets `rtc-core` ignore stale signaling from old tabs and detect slot takeover reliably.
+`FBAdapter` uses role leases for takeover:
+
+- on role attach, adapter runs `claimRole()` transaction for `leases/{role}`
+- if lease owner changes, previous session gets `role_taken_over` event
+- transaction updates only current owner docs (`lease`, current participant, room root, optional takeover event); foreign participant docs are not rewritten
+- same-role reconnect keeps the same `sessionId`; hard reload creates a new `sessionId`
+
+This keeps exactly one active `caller` and one active `callee` per room.
+
+`leaveRoom(role)` is ownership-guarded:
+
+- adapter reads current lease first
+- participant `active:false` and lease delete happen only when `(ownerUid, ownerSessionId)` still match local session
+- stale tabs after takeover cannot clear active lease/participant state
+
+## Security Callbacks
+
+`FBAdapter` accepts optional callbacks:
+
+- `onTakenOver({ roomId, bySessionId? })`
+- `onRoomOccupied({ roomId })`
+- `onSecurityError(error)`
+
+These callbacks are useful for UX teardown and e2e assertions around takeover paths.
 
 ## Environment Variables
 
@@ -122,6 +141,7 @@ pnpm test:rules:emu
 
 This suite covers:
 
-- happy-path caller/callee flow
-- edge cases (TTL, payload size limits, candidate bounds, immutable fields)
-- attacking scenarios (list/hijack/tamper/flood/modify)
+- path-based caller/callee signaling flow
+- lease ownership and takeover constraints
+- per-uid participant/candidate write isolation
+- event creation/read constraints
