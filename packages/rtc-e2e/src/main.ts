@@ -199,10 +199,7 @@ async function make(role: Who, opts: MakeOptions = {}) {
         debugSignal: async () => {
             const uid = auth.currentUser?.uid ?? null
             if (!uid || !currentRoomId) return null
-            const [room, offer] = await Promise.all([
-                signalDb.getRoom(),
-                signalDb.getOffer(),
-            ])
+            const [room, offer] = await Promise.all([signalDb.getRoom(), signalDb.getOffer()])
             return {
                 uid,
                 roomId: currentRoomId,
