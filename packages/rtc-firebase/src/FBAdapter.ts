@@ -15,6 +15,7 @@ import {
     doc,
     type Firestore,
     getDoc,
+    getDocFromServer,
     getDocs,
     limit,
     onSnapshot,
@@ -476,18 +477,74 @@ export class FBAdapter implements SignalDB {
         const localUid = this.uid
         const localSessionId = this.roleSessionByRole[role]
         if (!localUid || !localSessionId) return
+        let seenOwnedLease = false
+        let leaseConfirmInFlight = false
+
+        const confirmLeaseOwnership = (fallbackBySessionId?: string) => {
+            if (leaseConfirmInFlight || this.takeoverDetectedByRole[role]) return
+            leaseConfirmInFlight = true
+            void (async () => {
+                const readFreshLease = async () => {
+                    try {
+                        return await getDocFromServer(this.leaseRef(role))
+                    } catch {
+                        // Fallback keeps tests/dev behavior stable if server read is unavailable.
+                        return await getDoc(this.leaseRef(role))
+                    }
+                }
+                try {
+                    const freshSnapshot = await readFreshLease()
+                    if (!freshSnapshot.exists()) {
+                        if (seenOwnedLease) this.detectTakeover(role, fallbackBySessionId)
+                        return
+                    }
+                    const freshLease = freshSnapshot.data() as LeaseDoc
+                    if (
+                        freshLease.ownerUid === localUid &&
+                        freshLease.ownerSessionId === localSessionId
+                    ) {
+                        seenOwnedLease = true
+                        return
+                    }
+                    if (!seenOwnedLease) {
+                        // Startup race guard: until we have observed our own lease at least once,
+                        // require one more server-confirmed mismatch before treating as takeover.
+                        const retrySnapshot = await readFreshLease()
+                        if (!retrySnapshot.exists()) return
+                        const retryLease = retrySnapshot.data() as LeaseDoc
+                        if (
+                            retryLease.ownerUid === localUid &&
+                            retryLease.ownerSessionId === localSessionId
+                        ) {
+                            seenOwnedLease = true
+                        }
+                        return
+                    }
+                    this.detectTakeover(role, freshLease.ownerSessionId ?? fallbackBySessionId)
+                } catch (error) {
+                    this.reportSecurityError(error)
+                } finally {
+                    leaseConfirmInFlight = false
+                }
+            })()
+        }
 
         const leaseUnsub = onSnapshot(
             this.leaseRef(role),
             (snapshot) => {
                 if (!snapshot.exists()) {
-                    this.detectTakeover(role)
+                    // Ignore transient "missing" snapshots before the lease is first observed.
+                    // This prevents false takeover events on initial attach.
+                    if (seenOwnedLease) confirmLeaseOwnership()
                     return
                 }
                 const lease = snapshot.data() as LeaseDoc
-                if (lease.ownerUid !== localUid || lease.ownerSessionId !== localSessionId) {
-                    this.detectTakeover(role, lease.ownerSessionId)
+                if (lease.ownerUid === localUid && lease.ownerSessionId === localSessionId) {
+                    seenOwnedLease = true
+                    return
                 }
+                // Confirm mismatch against a fresh read to avoid cached snapshot false positives.
+                confirmLeaseOwnership(lease.ownerSessionId)
             },
             (error) => this.reportSecurityError(error),
         )
@@ -533,7 +590,17 @@ export class FBAdapter implements SignalDB {
 
     private async getLease(role: Role): Promise<LeaseDoc | null> {
         const cached = this.leaseCache[role]
-        if (cached !== undefined) return cached
+        const uid = this.uid
+        const localSessionId = this.roleSessionByRole[role]
+        const shouldRefreshOwnedLease =
+            this.activeRole === role &&
+            !!uid &&
+            !!localSessionId &&
+            (cached === null ||
+                (cached != null &&
+                    (cached.ownerUid !== uid || cached.ownerSessionId !== localSessionId)))
+
+        if (cached !== undefined && !shouldRefreshOwnedLease) return cached
         const snapshot = await getDoc(this.leaseRef(role))
         const lease = snapshot.exists() ? (snapshot.data() as LeaseDoc) : null
         this.leaseCache[role] = lease
