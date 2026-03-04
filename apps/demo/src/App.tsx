@@ -34,19 +34,134 @@ const setHashPath = (path: string) => {
 
 type ScreenMode = 'initial' | 'caller' | 'callee'
 type RouteStrategyMode = 'default' | 'native'
+type AttachRole = Exclude<ScreenMode, 'initial'>
+type AttachRoute = {
+    role: AttachRole
+    roomId: string
+    strategyMode: RouteStrategyMode
+    style: 'path' | 'query'
+    queryParams: URLSearchParams
+}
+type SecurityRoomEventDetail = {
+    roomId?: string
+    bySessionId?: string
+}
+type DemoTraceEntry = {
+    at: string
+    event: string
+    payload?: unknown
+}
+
+declare global {
+    interface Window {
+        __vibeRtcTrace?: DemoTraceEntry[]
+    }
+}
 
 function toRouteStrategyMode(value: string | null | undefined): RouteStrategyMode {
     return value === 'native' ? 'native' : 'default'
 }
 
-function toAttachHashPath(
-    role: Exclude<ScreenMode, 'initial'>,
-    roomId: string,
-    strategy: RouteStrategyMode,
-): string {
+function toAttachHashPath(role: AttachRole, roomId: string, strategy: RouteStrategyMode): string {
     const encodedRoomId = encodeURIComponent(roomId)
     const basePath = `/attach/${role}/${encodedRoomId}`
     return strategy === 'native' ? `${basePath}?strategy=native` : basePath
+}
+
+function parseAttachRoute(hashPath: string): AttachRoute | null {
+    const normalized = hashPath.startsWith('/') ? hashPath : `/${hashPath}`
+    const [pathname, query = ''] = normalized.split('?')
+    const queryParams = new URLSearchParams(query)
+    const strategyMode = toRouteStrategyMode(queryParams.get('strategy'))
+
+    const pathMatch = pathname.match(/^\/attach\/(caller|callee)\/([^/]+)$/)
+    if (pathMatch?.[1] && pathMatch[2]) {
+        const roomId = decodeURIComponent(pathMatch[2]).trim()
+        if (!roomId) return null
+        return {
+            role: pathMatch[1] as AttachRole,
+            roomId,
+            strategyMode,
+            style: 'path',
+            queryParams,
+        }
+    }
+
+    if (pathname === '/attach') {
+        const roleRaw = queryParams.get('role') ?? queryParams.get('as')
+        const role = roleRaw === 'caller' || roleRaw === 'callee' ? roleRaw : null
+        const roomId = (queryParams.get('roomId') ?? queryParams.get('room') ?? '').trim()
+        if (!role || !roomId) return null
+        return {
+            role,
+            roomId,
+            strategyMode,
+            style: 'query',
+            queryParams,
+        }
+    }
+
+    return null
+}
+
+function toAttachHashPathForRoute(role: AttachRole, route: AttachRoute): string {
+    if (route.style === 'query') {
+        const params = new URLSearchParams(route.queryParams)
+        if (params.has('role')) params.set('role', role)
+        else if (params.has('as')) params.set('as', role)
+        else params.set('role', role)
+
+        if (params.has('roomId')) params.set('roomId', route.roomId)
+        else if (params.has('room')) params.set('room', route.roomId)
+        else params.set('roomId', route.roomId)
+
+        if (route.strategyMode === 'native') params.set('strategy', 'native')
+        else params.delete('strategy')
+
+        const query = params.toString()
+        return query ? `/attach?${query}` : '/attach'
+    }
+
+    const params = new URLSearchParams(route.queryParams)
+    if (route.strategyMode === 'native') params.set('strategy', 'native')
+    else params.delete('strategy')
+    const query = params.toString()
+    const basePath = `/attach/${role}/${encodeURIComponent(route.roomId)}`
+    return query ? `${basePath}?${query}` : basePath
+}
+
+function parseSecurityRoomEventDetail(event: Event): SecurityRoomEventDetail | null {
+    if (!(event instanceof CustomEvent)) return null
+    const detail = event.detail
+    if (!detail || typeof detail !== 'object') return null
+    const payload = detail as SecurityRoomEventDetail
+    return {
+        roomId: typeof payload.roomId === 'string' ? payload.roomId : undefined,
+        bySessionId: typeof payload.bySessionId === 'string' ? payload.bySessionId : undefined,
+    }
+}
+
+function traceDemo(event: string, payload?: unknown) {
+    if (typeof window === 'undefined') return
+    const entry: DemoTraceEntry = {
+        at: new Date().toISOString(),
+        event,
+        payload,
+    }
+    const buffer = window.__vibeRtcTrace ?? []
+    buffer.push(entry)
+    if (buffer.length > 400) buffer.splice(0, buffer.length - 400)
+    window.__vibeRtcTrace = buffer
+    if (payload === undefined) {
+        console.info(`[vibe-demo] ${event}`)
+        return
+    }
+    try {
+        const pretty = JSON.stringify(payload, null, 4)
+        console.info(`[vibe-demo] ${event}\n${pretty}`)
+    } catch {
+        console.info(`[vibe-demo] ${event}\n${String(payload)}`)
+    }
 }
 
 function isChannelMessage(entry: VibeRTCOperationLogEntry): boolean {
@@ -74,6 +189,7 @@ export function App() {
     const [roomOccupiedModalOpen, setRoomOccupiedModalOpen] = useState(false)
     const [takeoverModalOpen, setTakeoverModalOpen] = useState(false)
     const [securityTakeoverDetected, setSecurityTakeoverDetected] = useState(false)
+    const [takeoverBySessionId, setTakeoverBySessionId] = useState<string | null>(null)
     const [createProgressRatio, setCreateProgressRatio] = useState(0)
     const [createProgressTrackWidthPx, setCreateProgressTrackWidthPx] = useState(0)
     const [connectProgressRatio, setConnectProgressRatio] = useState(0)
@@ -89,6 +205,7 @@ export function App() {
     const createProgressTrackRef = useRef<HTMLDivElement | null>(null)
     const connectProgressTrackRef = useRef<HTMLDivElement | null>(null)
     const prevOverallStatusRef = useRef<string | null>(null)
+    const prevDebugTraceKeyRef = useRef<string | null>(null)
     const warningTimerRef = useRef<number | undefined>(undefined)
     const warningCooldownRef = useRef<Record<WarningKey, number>>({ relay: 0, 'high-direct': 0 })
     const highDirectStreakRef = useRef(0)
@@ -96,6 +213,7 @@ export function App() {
     const prevModeRef = useRef<ScreenMode>('initial')
     const modeEffectBootRef = useRef(false)
     const [hashPath, setHashPathState] = useState(readHashPath)
+    const routeRoomIdRef = useRef('')
 
     useEffect(() => {
         const onHashChange = () => setHashPathState(readHashPath())
@@ -104,10 +222,37 @@ export function App() {
     }, [])
 
     useEffect(() => {
-        const onRoomOccupied = () => setRoomOccupiedModalOpen(true)
-        const onTakenOver = () => {
+        const onRoomOccupied = (event: Event) => {
+            const detail = parseSecurityRoomEventDetail(event)
+            const activeRoomId = routeRoomIdRef.current
+            traceDemo('security:room_occupied:event', {
+                detail,
+                activeRoomId,
+            })
+            if (!activeRoomId) return
+            if (detail?.roomId && detail.roomId !== activeRoomId) return
+            setRoomOccupiedModalOpen(true)
+            traceDemo('security:room_occupied:accepted', {
+                detail,
+                activeRoomId,
+            })
+        }
+        const onTakenOver = (event: Event) => {
+            const detail = parseSecurityRoomEventDetail(event)
+            const activeRoomId = routeRoomIdRef.current
+            traceDemo('security:taken_over:event', {
+                detail,
+                activeRoomId,
+            })
+            if (!activeRoomId) return
+            if (detail?.roomId && detail.roomId !== activeRoomId) return
+            setTakeoverBySessionId(detail?.bySessionId ?? null)
             setSecurityTakeoverDetected(true)
             setTakeoverModalOpen(true)
+            traceDemo('security:taken_over:accepted', {
+                detail,
+                activeRoomId,
+            })
         }
         window.addEventListener(SECURITY_EVENT_ROOM_OCCUPIED, onRoomOccupied)
         window.addEventListener(SECURITY_EVENT_TAKEN_OVER, onTakenOver)
@@ -117,13 +262,22 @@ export function App() {
         }
     }, [])
 
-    const [hashPathname, hashQuery = ''] = hashPath.split('?')
-    const hashParams = useMemo(() => new URLSearchParams(hashQuery), [hashQuery])
-    const routeStrategyMode = toRouteStrategyMode(hashParams.get('strategy'))
-    const match = hashPathname.match(/\/attach\/(caller|callee)\/([^/]+)$/)
-    const routeRole = match?.[1] as 'caller' | 'callee' | undefined
-    const routeRoomId = match?.[2] ? decodeURIComponent(match[2]) : ''
+    const attachRoute = useMemo(() => parseAttachRoute(hashPath), [hashPath])
+    const routeStrategyMode = attachRoute?.strategyMode ?? 'default'
+    const routeRole = attachRoute?.role
+    const routeRoomId = attachRoute?.roomId ?? ''
     const mode: ScreenMode = routeRole ?? 'initial'
+    routeRoomIdRef.current = routeRoomId
+
+    useEffect(() => {
+        traceDemo('route:parsed', {
+            hashPath,
+            attachRoute,
+            mode,
+            routeRoomId,
+            routeStrategyMode,
+        })
+    }, [hashPath, attachRoute, mode, routeRoomId, routeStrategyMode])
 
     const fastState = rtc.debugState?.fast?.state
     const reliableState = rtc.debugState?.reliable?.state
@@ -156,9 +310,63 @@ export function App() {
     const isRoomNotFoundError =
         rtc.lastError?.code === 'ROOM_NOT_FOUND' ||
         /room not found|no such document/i.test(rtc.lastError?.message ?? '')
+    const takeoverErrorMessage = rtc.lastError?.message ?? ''
     const isTakeoverError =
         rtc.lastError?.code === 'TAKEOVER_DETECTED' ||
-        /taken over in another tab/i.test(rtc.lastError?.message ?? '')
+        (rtc.lastError?.code === 'INVALID_STATE' &&
+            /takeover|taken over/i.test(takeoverErrorMessage)) ||
+        /taken over in another tab|takeover detected/i.test(takeoverErrorMessage)
+
+    useEffect(() => {
+        if (!rtc.lastError) return
+        traceDemo('state:last_error', {
+            code: rtc.lastError.code ?? null,
+            message: rtc.lastError.message,
+            at: rtc.lastError.at,
+            mode,
+            routeRoomId,
+        })
+    }, [rtc.lastError, mode, routeRoomId])
+
+    useEffect(() => {
+        traceDemo('state:overall_status', {
+            overallStatus: rtc.overallStatus,
+            statusText: rtc.overallStatusText,
+            mode,
+            routeRoomId,
+        })
+    }, [rtc.overallStatus, rtc.overallStatusText, mode, routeRoomId])
+
+    useEffect(() => {
+        const debug = rtc.debugState
+        if (!debug) return
+        const key = [
+            debug.pcGeneration,
+            debug.phase,
+            debug.lastEvent ?? 'none',
+            debug.pcState,
+            debug.iceState,
+            debug.signalingState,
+            debug.icePhase,
+            debug.sessionId ?? 'none',
+        ].join('|')
+        if (prevDebugTraceKeyRef.current === key) return
+        prevDebugTraceKeyRef.current = key
+        traceDemo('state:debug', {
+            lastEvent: debug.lastEvent ?? null,
+            phase: debug.phase,
+            pcState: debug.pcState,
+            iceState: debug.iceState,
+            signalingState: debug.signalingState,
+            icePhase: debug.icePhase,
+            sessionId: debug.sessionId,
+            participantId: debug.participantId,
+            generation: debug.pcGeneration,
+            pendingIce: debug.pendingIce,
+            fast: debug.fast ?? null,
+            reliable: debug.reliable ?? null,
+        })
+    }, [rtc.debugState])
     const orderedLog = useMemo(
         () =>
             rtc.operationLog
@@ -178,9 +386,10 @@ export function App() {
     }, [orderedLog, hideConnectionMessages])
 
     const calleeUrl = useMemo(() => {
-        if (!routeRoomId) return ''
-        return `${window.location.origin}${toBasePath('/')}#${toAttachHashPath('callee', routeRoomId, routeStrategyMode)}`
-    }, [routeRoomId, routeStrategyMode])
+        if (!attachRoute || attachRoute.role !== 'caller') return ''
+        const attachHash = toAttachHashPathForRoute('callee', attachRoute)
+        return `${window.location.origin}${toBasePath('/')}#${attachHash}`
+    }, [attachRoute])
 
     useEffect(() => {
         let cancelled = false
@@ -220,9 +429,43 @@ export function App() {
                 : undefined
 
         if (routeRole === 'caller') {
-            void rtc.attachAsCaller(routeRoomId, sessionOpts)
+            traceDemo('attach:start', { routeRole, routeRoomId, routeStrategyMode })
+            void rtc
+                .attachAsCaller(routeRoomId, sessionOpts)
+                .then(() => {
+                    traceDemo('attach:ok', {
+                        routeRole,
+                        routeRoomId,
+                        routeStrategyMode,
+                    })
+                })
+                .catch((error: unknown) => {
+                    traceDemo('attach:error', {
+                        routeRole,
+                        routeRoomId,
+                        routeStrategyMode,
+                        message: error instanceof Error ? error.message : String(error),
+                    })
+                })
         } else {
-            void rtc.attachAsCallee(routeRoomId, sessionOpts)
+            traceDemo('attach:start', { routeRole, routeRoomId, routeStrategyMode })
+            void rtc
+                .attachAsCallee(routeRoomId, sessionOpts)
+                .then(() => {
+                    traceDemo('attach:ok', {
+                        routeRole,
+                        routeRoomId,
+                        routeStrategyMode,
+                    })
+                })
+                .catch((error: unknown) => {
+                    traceDemo('attach:error', {
+                        routeRole,
+                        routeRoomId,
+                        routeStrategyMode,
+                        message: error instanceof Error ? error.message : String(error),
+                    })
+                })
         }
     }, [routeRole, routeRoomId, routeStrategyMode, rtc.attachAsCaller, rtc.attachAsCallee])
 
@@ -236,6 +479,7 @@ export function App() {
         if (!isTakeoverError) return
         setTakeoverModalOpen(true)
         setSecurityTakeoverDetected(false)
+        setTakeoverBySessionId(null)
     }, [mode, isTakeoverError])
 
     useEffect(() => {
@@ -374,6 +618,7 @@ export function App() {
             setRoomOccupiedModalOpen(false)
             setTakeoverModalOpen(false)
             setSecurityTakeoverDetected(false)
+            setTakeoverBySessionId(null)
             setLeavePending(false)
             setRemoveRoomOnLeave(true)
             setNetWarning(null)
@@ -527,6 +772,7 @@ export function App() {
         setRoomOccupiedModalOpen(false)
         setTakeoverModalOpen(false)
         setSecurityTakeoverDetected(false)
+        setTakeoverBySessionId(null)
         setJoinModalOpen(false)
         setJoinRoomIdInput('')
         autoRouteHandledRef.current = null
@@ -579,7 +825,7 @@ export function App() {
                     />
                 </div>
                 <p className="appModalMessage">
-                    This room is already occupied by another participant token.
+                    This room is already occupied by another active participant/session.
                 </p>
                 <menu className="leaveModalActions">
                     <button type="button" className="cs-btn" onClick={backToMain}>
@@ -605,8 +851,12 @@ export function App() {
                         <h2 className="qrModalTitle">Session taken over</h2>
                     </div>
                     <p className="appModalMessage">
-                        This room slot was taken over in another tab. This page is now inactive.
+                        This room slot was taken over in another tab or device. This page is now
+                        inactive.
                     </p>
+                    {takeoverBySessionId && (
+                        <p className="appModalMessage">New owner session: {takeoverBySessionId}</p>
+                    )}
                     <menu className="leaveModalActions">
                         <button type="button" className="cs-btn" onClick={backToMain}>
                             OK

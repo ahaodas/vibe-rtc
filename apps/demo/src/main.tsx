@@ -243,6 +243,9 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
                     }
                 },
                 onRoomOccupied(payload: { roomId: string }) {
+                    console.info(
+                        `[vibe-demo][security] room_occupied\n${JSON.stringify(payload, null, 4)}`,
+                    )
                     if (typeof window !== 'undefined') {
                         window.dispatchEvent(
                             new CustomEvent(SECURITY_EVENT_ROOM_OCCUPIED, { detail: payload }),
@@ -250,6 +253,9 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
                     }
                 },
                 onTakenOver(payload: { roomId: string; bySessionId?: string }) {
+                    console.info(
+                        `[vibe-demo][security] taken_over\n${JSON.stringify(payload, null, 4)}`,
+                    )
                     if (typeof window !== 'undefined') {
                         window.dispatchEvent(
                             new CustomEvent(SECURITY_EVENT_TAKEN_OVER, { detail: payload }),
@@ -257,7 +263,10 @@ function RTCWrapper({ children }: { children: React.ReactNode }) {
                     }
                 },
                 onSecurityError(err: unknown) {
-                    console.error('[vibe-rtc][security]', err)
+                    const message = err instanceof Error ? err.message : String(err)
+                    console.error(
+                        `[vibe-demo][security] error\n${JSON.stringify({ message }, null, 4)}`,
+                    )
                 },
             },
         })
