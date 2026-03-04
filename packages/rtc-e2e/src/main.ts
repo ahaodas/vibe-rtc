@@ -2,18 +2,40 @@ import { type ConnectionStrategy, RTCSignaler } from '@vibe-rtc/rtc-core'
 import { ensureFirebase, FBAdapter } from '@vibe-rtc/rtc-firebase'
 import { doc, getDoc } from 'firebase/firestore'
 
-const firebaseConfig = {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-    authDomain: `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-    storageBucket: `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.appspot.com`,
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-    appId: import.meta.env.VITE_FIREBASE_APP_ID,
+const REQUIRED_FIREBASE_ENV_KEYS = [
+    'VITE_FIREBASE_API_KEY',
+    'VITE_FIREBASE_PROJECT_ID',
+    'VITE_FIREBASE_APP_ID',
+    'VITE_FIREBASE_MESSAGING_SENDER_ID',
+] as const
+
+function readEnv(name: string): string {
+    const raw = (import.meta.env as Record<string, unknown>)[name]
+    return typeof raw === 'string' ? raw.trim() : ''
 }
-const FIRESTORE_EMULATOR_HOST =
-    import.meta.env.VITE_FIRESTORE_EMULATOR_HOST ?? import.meta.env.FIRESTORE_EMULATOR_HOST
+
+function missingFirebaseEnvKeys(): string[] {
+    return REQUIRED_FIREBASE_ENV_KEYS.filter((key) => !readEnv(key))
+}
+
+function assertFirebaseHarnessConfig() {
+    const missing = missingFirebaseEnvKeys()
+    if (missing.length > 0) {
+        throw new Error(`[rtc-e2e] missing Firebase env vars: ${missing.join(', ')}`)
+    }
+}
+
+const firebaseConfig = {
+    apiKey: readEnv('VITE_FIREBASE_API_KEY'),
+    authDomain: `${readEnv('VITE_FIREBASE_PROJECT_ID')}.firebaseapp.com`,
+    projectId: readEnv('VITE_FIREBASE_PROJECT_ID'),
+    storageBucket: `${readEnv('VITE_FIREBASE_PROJECT_ID')}.appspot.com`,
+    messagingSenderId: readEnv('VITE_FIREBASE_MESSAGING_SENDER_ID'),
+    appId: readEnv('VITE_FIREBASE_APP_ID'),
+}
+const FIRESTORE_EMULATOR_HOST = readEnv('VITE_FIRESTORE_EMULATOR_HOST') || readEnv('FIRESTORE_EMULATOR_HOST')
 const FIREBASE_AUTH_EMULATOR_HOST =
-    import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST ?? import.meta.env.FIREBASE_AUTH_EMULATOR_HOST
+    readEnv('VITE_FIREBASE_AUTH_EMULATOR_HOST') || readEnv('FIREBASE_AUTH_EMULATOR_HOST')
 
 type Who = 'caller' | 'callee'
 type MakeOptions = {
@@ -74,10 +96,23 @@ function parseAttachHash(hashRaw: string): {
 }
 
 async function make(role: Who, opts: MakeOptions = {}) {
-    const { db, auth } = await ensureFirebase(firebaseConfig, {
-        firestoreEmulatorHost: FIRESTORE_EMULATOR_HOST,
-        authEmulatorHost: FIREBASE_AUTH_EMULATOR_HOST,
-    })
+    assertFirebaseHarnessConfig()
+    const mode = FIRESTORE_EMULATOR_HOST || FIREBASE_AUTH_EMULATOR_HOST ? 'emulator' : 'real'
+    let db: Awaited<ReturnType<typeof ensureFirebase>>['db']
+    let auth: Awaited<ReturnType<typeof ensureFirebase>>['auth']
+    try {
+        ;({ db, auth } = await ensureFirebase(firebaseConfig, {
+            firestoreEmulatorHost: FIRESTORE_EMULATOR_HOST,
+            authEmulatorHost: FIREBASE_AUTH_EMULATOR_HOST,
+        }))
+    } catch (error) {
+        const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error)
+        throw new Error(
+            `[rtc-e2e] ensureFirebase failed (${mode} mode): ${reason}. ` +
+                `firestoreEmulatorHost=${FIRESTORE_EMULATOR_HOST || 'off'}, ` +
+                `authEmulatorHost=${FIREBASE_AUTH_EMULATOR_HOST || 'off'}`,
+        )
+    }
     let securityEvents: string[] = []
     const signalDb = new FBAdapter(db, auth, {
         securityMode: 'demo_hardened',
@@ -126,6 +161,7 @@ async function make(role: Who, opts: MakeOptions = {}) {
             if (isReady()) return
             await new Promise((r) => setTimeout(r, 100))
         }
+        if (isReady()) return
         throw new Error(`waitReadyNoAssist timeout: ${JSON.stringify(s.inspect())}`)
     }
 

@@ -24,6 +24,12 @@ This package is internal and not published.
 pnpm --filter @vibe-rtc/rtc-e2e test
 ```
 
+Run takeover-only suite:
+
+```bash
+pnpm --filter @vibe-rtc/rtc-e2e exec playwright test --project=chromium --grep takeover
+```
+
 Run against local Firebase emulators (from repo root):
 
 ```bash
@@ -33,10 +39,22 @@ pnpm test:e2e:emu
 Run only takeover suite:
 
 ```bash
-pnpm test:e2e:emu -- --grep takeover
+pnpm test:e2e:emu:takeover
 ```
 
+Run against real Firebase (from repo root, emulator hosts forced to empty values):
+
+```bash
+pnpm test:e2e:real
+pnpm test:e2e:real:takeover
+pnpm test:e2e:real:full
+```
+
+`pnpm test:e2e:real` is intentionally smoke-only.
+`pnpm test:e2e:real:full` is currently unstable and not recommended for regular runs/CI gating.
+
 Playwright config starts local Vite server (`dev:e2e`) and runs Chromium tests.
+Global test timeout is mode-aware: `60s` on emulator and `120s` on real Firebase.
 
 ## Local Dev Server for E2E Harness
 
@@ -57,6 +75,9 @@ Optional emulator env:
 
 - `FIRESTORE_EMULATOR_HOST` or `VITE_FIRESTORE_EMULATOR_HOST`
 - `FIREBASE_AUTH_EMULATOR_HOST` or `VITE_FIREBASE_AUTH_EMULATOR_HOST`
+
+When `*_EMULATOR_HOST` is set, harness works in emulator mode. For real Firebase runs, keep these vars unset.
+The harness now fails fast with explicit error if required Firebase env vars are missing.
 
 STUN servers for E2E are configured directly in `src/main.ts` via `rtcConfiguration`.
 The harness also supports strategy override per role factory call

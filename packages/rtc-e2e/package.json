@@ -6,7 +6,8 @@
     "scripts": {
         "dev:e2e": "E2E=1 vite dev --mode e2e",
         "precommit": "pnpm exec biome check src tests",
-        "test": "playwright test --project=chromium"
+        "test": "playwright test --project=chromium",
+        "show-report": "playwright show-report"
     },
     "devDependencies": {
         "@playwright/test": "^1.56.1",

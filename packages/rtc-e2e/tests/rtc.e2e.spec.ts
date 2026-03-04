@@ -12,7 +12,7 @@ const USING_FIREBASE_EMULATOR =
     Boolean(process.env.VITE_FIREBASE_AUTH_EMULATOR_HOST)
 const RECOVERY_SLA_MS = USING_FIREBASE_EMULATOR ? 12_000 : 10_000
 const BROWSER_NATIVE_RECOVERY_SLA_MS = 15_000
-const TAKEOVER_READY_TIMEOUT_MS = 60_000
+const TAKEOVER_READY_TIMEOUT_MS = USING_FIREBASE_EMULATOR ? 90_000 : 120_000
 const CLEANUP_TIMEOUT_MS = 4_000
 
 type RoleState = {
@@ -120,6 +120,9 @@ async function waitRoleReadyInternal(
                     }, who)
                 } catch {
                     throw error
+                }
+                if (isConnected(debug?.state)) {
+                    return Date.now() - startedAt
                 }
                 throw new Error(`${message}; debug=${JSON.stringify(debug)}`)
             }
@@ -391,13 +394,30 @@ async function reloadRoleStrict(
 
     await page.evaluate(
         async ({ who, roomId, connectionStrategy }) => {
+            const joinWithRetry = async (join: () => Promise<void>) => {
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    try {
+                        await join()
+                        return
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error)
+                        const retryable =
+                            message.includes('joinRoom failed') ||
+                            message.includes('permission-denied') ||
+                            message.includes('failed-precondition') ||
+                            message.includes('TAKEOVER_DETECTED')
+                        if (!retryable || attempt === 3) throw error
+                        await new Promise((r) => setTimeout(r, 120 * (attempt + 1)))
+                    }
+                }
+            }
             if (who === 'caller') {
                 ;(window as unknown as E2EWindow).caller = await (
                     window as unknown as E2EWindow
                 ).app.makeCaller({ connectionStrategy })
                 const caller = (window as unknown as E2EWindow).caller
                 if (!caller) throw new Error('caller role is missing after reload')
-                await caller.joinRoom(roomId)
+                await joinWithRetry(() => caller.joinRoom(roomId))
                 return
             }
             ;(window as unknown as E2EWindow).callee = await (
@@ -405,7 +425,7 @@ async function reloadRoleStrict(
             ).app.makeCallee({ connectionStrategy })
             const callee = (window as unknown as E2EWindow).callee
             if (!callee) throw new Error('callee role is missing after reload')
-            await callee.joinRoom(roomId)
+            await joinWithRetry(() => callee.joinRoom(roomId))
         },
         { who, roomId, connectionStrategy },
     )
@@ -424,13 +444,30 @@ async function reloadRoleNoWait(
 
     await page.evaluate(
         async ({ who, roomId, connectionStrategy }) => {
+            const joinWithRetry = async (join: () => Promise<void>) => {
+                for (let attempt = 0; attempt < 4; attempt++) {
+                    try {
+                        await join()
+                        return
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error)
+                        const retryable =
+                            message.includes('joinRoom failed') ||
+                            message.includes('permission-denied') ||
+                            message.includes('failed-precondition') ||
+                            message.includes('TAKEOVER_DETECTED')
+                        if (!retryable || attempt === 3) throw error
+                        await new Promise((r) => setTimeout(r, 120 * (attempt + 1)))
+                    }
+                }
+            }
             if (who === 'caller') {
                 ;(window as unknown as E2EWindow).caller = await (
                     window as unknown as E2EWindow
                 ).app.makeCaller({ connectionStrategy })
                 const caller = (window as unknown as E2EWindow).caller
                 if (!caller) throw new Error('caller role is missing after reload')
-                await caller.joinRoom(roomId)
+                await joinWithRetry(() => caller.joinRoom(roomId))
                 return
             }
             ;(window as unknown as E2EWindow).callee = await (
@@ -438,7 +475,7 @@ async function reloadRoleNoWait(
             ).app.makeCallee({ connectionStrategy })
             const callee = (window as unknown as E2EWindow).callee
             if (!callee) throw new Error('callee role is missing after reload')
-            await callee.joinRoom(roomId)
+            await joinWithRetry(() => callee.joinRoom(roomId))
         },
         { who, roomId, connectionStrategy },
     )

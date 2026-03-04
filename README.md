@@ -199,9 +199,26 @@ pnpm test:rules:emu
 
 # Run Playwright harness against emulators (no real Firebase project)
 pnpm test:e2e:emu
+
+# Run takeover-only suite on emulators
+pnpm test:e2e:emu:takeover
+
+# Run recommended smoke-only checks against real Firebase (requires VITE_FIREBASE_* env)
+pnpm test:e2e:real
+
+# Run explicit smoke selector on real Firebase
+pnpm test:e2e:real:smoke
+
+# Run takeover-only suite on real Firebase
+pnpm test:e2e:real:takeover
+
+# Run full real Firebase e2e suite (known unstable; not recommended for regular use)
+pnpm test:e2e:real:full
 ```
 
 Emulator UI is available at `http://127.0.0.1:4000` and can be used to inspect reads/writes and rule denials while running tests.
+
+Note: `test:e2e:real:*` is currently unstable (network/firestore timing variance). Keep it as manual smoke only; do not use as a required gate.
 
 CI deploy is available via `.github/workflows/firestore-rules.yml`.
 Set:
