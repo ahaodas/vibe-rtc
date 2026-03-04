@@ -20,6 +20,12 @@ describe('rtc-react state helpers', () => {
         expect(typeof e.at).toBe('number')
     })
 
+    it('normalizes takeover-like INVALID_STATE to TAKEOVER_DETECTED', () => {
+        const e = normalizeError({ message: 'takeover detected', code: 'INVALID_STATE' })
+        expect(e.code).toBe('TAKEOVER_DETECTED')
+        expect(e.message).toBe('Room slot was taken over in another tab')
+    })
+
     it('tracks message sequence and reset semantics', () => {
         const s1 = reducer(initialState, {
             type: 'FAST_MESSAGE',
@@ -54,5 +60,18 @@ describe('rtc-react state helpers', () => {
         })
         expect(s.status).toBe('error')
         expect(s.lastError?.code).toBe('SIGNAL_TIMEOUT')
+    })
+
+    it('does not reset connecting status on BOOT_OK', () => {
+        const booting = reducer(initialState, { type: 'BOOT_START' })
+        const connecting = reducer(booting, { type: 'SET_STATUS', status: 'connecting' })
+        const afterBoot = reducer(connecting, { type: 'BOOT_OK' })
+        expect(afterBoot.status).toBe('connecting')
+    })
+
+    it('does not downgrade connecting status on BOOT_START', () => {
+        const connecting = reducer(initialState, { type: 'SET_STATUS', status: 'connecting' })
+        const booting = reducer(connecting, { type: 'BOOT_START' })
+        expect(booting.status).toBe('connecting')
     })
 })

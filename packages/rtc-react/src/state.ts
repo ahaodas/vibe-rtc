@@ -28,9 +28,21 @@ export const initialState: VibeRTCState = {
 export function reducer(state: VibeRTCState, a: Action): VibeRTCState {
     switch (a.type) {
         case 'BOOT_START':
-            return { ...state, booting: true, bootError: undefined, status: 'booting' }
+            return {
+                ...state,
+                booting: true,
+                bootError: undefined,
+                // Do not clobber an ongoing session flow that already set a runtime status.
+                status: state.status === 'idle' ? 'booting' : state.status,
+            }
         case 'BOOT_OK':
-            return { ...state, booting: false, bootError: undefined, status: 'idle' }
+            return {
+                ...state,
+                booting: false,
+                bootError: undefined,
+                // Preserve an already-running session state (e.g. connecting) started during boot.
+                status: state.status === 'booting' ? 'idle' : state.status,
+            }
         case 'BOOT_ERROR':
             return { ...state, booting: false, bootError: a.error, status: 'error' }
         case 'SET_STATUS':
@@ -79,10 +91,17 @@ export function normalizeError(err: unknown): VibeRTCError {
                   cause?: unknown
               })
             : undefined
+    const message = String(value?.message ?? 'Unknown error')
+    const messageLower = message.toLowerCase()
+    const rawCode = typeof value?.code === 'string' ? value.code : undefined
+    const isTakeover =
+        rawCode === 'TAKEOVER_DETECTED' ||
+        (rawCode === 'INVALID_STATE' &&
+            (messageLower.includes('takeover') || messageLower.includes('taken over')))
     return {
         name: String(value?.name ?? 'Error'),
-        message: String(value?.message ?? 'Unknown error'),
-        code: typeof value?.code === 'string' ? value.code : undefined,
+        message: isTakeover ? 'Room slot was taken over in another tab' : message,
+        code: isTakeover ? 'TAKEOVER_DETECTED' : rawCode,
         cause: value?.cause,
         at: Date.now(),
     }

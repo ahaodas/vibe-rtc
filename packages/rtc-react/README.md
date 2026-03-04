@@ -82,10 +82,11 @@ await rtc.endRoom()
 
 ## Takeover Behavior
 
-`rtc-react` watches room slot ownership (`rooms/{roomId}.slots`) and handles same-role takeover:
+`rtc-react` watches effective room slot ownership (lease-backed `slots`) and handles same-role takeover:
 
 - if another tab takes your role slot, provider disposes active session
 - `lastError` is set to `TAKEOVER_DETECTED`
+  (including core `INVALID_STATE` takeover signals normalized to this code)
 - signaling/data channels are closed and no auto-rejoin is performed
 
 Recommended UI flow:
