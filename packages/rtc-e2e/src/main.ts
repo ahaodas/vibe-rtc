@@ -1,6 +1,5 @@
 import { type ConnectionStrategy, RTCSignaler } from '@vibe-rtc/rtc-core'
 import { ensureFirebase, FBAdapter } from '@vibe-rtc/rtc-firebase'
-import { doc, getDoc } from 'firebase/firestore'
 
 const REQUIRED_FIREBASE_ENV_KEYS = [
     'VITE_FIREBASE_API_KEY',
@@ -200,19 +199,15 @@ async function make(role: Who, opts: MakeOptions = {}) {
         debugSignal: async () => {
             const uid = auth.currentUser?.uid ?? null
             if (!uid || !currentRoomId) return null
-            const [callerLease, calleeLease, callerDoc, calleeDoc] = await Promise.all([
-                getDoc(doc(db, 'rooms', currentRoomId, 'leases', 'caller')),
-                getDoc(doc(db, 'rooms', currentRoomId, 'leases', 'callee')),
-                getDoc(doc(db, 'rooms', currentRoomId, 'callers', uid)),
-                getDoc(doc(db, 'rooms', currentRoomId, 'callees', uid)),
+            const [room, offer] = await Promise.all([
+                signalDb.getRoom(),
+                signalDb.getOffer(),
             ])
             return {
                 uid,
                 roomId: currentRoomId,
-                callerLease: callerLease.exists() ? callerLease.data() : null,
-                calleeLease: calleeLease.exists() ? calleeLease.data() : null,
-                callerDoc: callerDoc.exists() ? callerDoc.data() : null,
-                calleeDoc: calleeDoc.exists() ? calleeDoc.data() : null,
+                room,
+                offer,
             }
         },
         takeSecurityEvents: () => {
