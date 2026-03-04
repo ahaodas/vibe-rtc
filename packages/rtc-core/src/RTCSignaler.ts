@@ -425,6 +425,8 @@ export class RTCSignaler {
             roomId: id,
         })
         this.emitDebug('join-success')
+        // Align lifecycle with joinRoom(): connect() flow expects non-idle pre-subscribed state.
+        this.phase = 'subscribed'
         this.dbg.p(`createRoom -> ${id}`)
         this.emitDebug('createRoom')
         return id
@@ -1403,15 +1405,32 @@ export class RTCSignaler {
         this.ownSlotCheckInFlight = (async () => {
             let active = true
             try {
-                const room = await this.signalDb.getRoom()
-                const slot = this.getRoleSlotFromRoom(room, this.role)
-                const ownerMismatch =
-                    !!slot?.participantId &&
-                    !!this.participantId &&
-                    slot.participantId !== this.participantId
                 const localSessionId = this.getLocalRoleSessionId()
-                const sessionMismatch =
-                    !!slot?.sessionId && !!localSessionId && slot.sessionId !== localSessionId
+                const localParticipantId = this.participantId
+                const resolveMismatch = async () => {
+                    const room = await this.signalDb.getRoom()
+                    const slot = this.getRoleSlotFromRoom(room, this.role)
+                    return {
+                        slot,
+                        ownerMismatch:
+                            !!slot?.participantId &&
+                            !!localParticipantId &&
+                            slot.participantId !== localParticipantId,
+                        sessionMismatch:
+                            !!slot?.sessionId &&
+                            !!localSessionId &&
+                            slot.sessionId !== localSessionId,
+                    }
+                }
+
+                let { slot, ownerMismatch, sessionMismatch } = await resolveMismatch()
+                if (ownerMismatch || sessionMismatch) {
+                    // Re-check once to avoid false positives from transient stale snapshots.
+                    const confirmed = await resolveMismatch()
+                    slot = confirmed.slot
+                    ownerMismatch = confirmed.ownerMismatch
+                    sessionMismatch = confirmed.sessionMismatch
+                }
                 if (ownerMismatch) {
                     active = false
                     await this.handleTakeoverDetected(source, slot)

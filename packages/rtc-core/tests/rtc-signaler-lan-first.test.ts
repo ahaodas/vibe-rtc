@@ -353,6 +353,32 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         expect(setOffer).toHaveBeenCalledTimes(1)
     })
 
+    it('publishes bootstrap offer on createRoom -> connect flow', async () => {
+        vi.useFakeTimers()
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+        const setOffer = vi.fn(async () => {})
+
+        const signaler = new RTCSignaler(
+            'caller',
+            makeDb({
+                setOffer,
+                createRoom: async () => 'room-create-flow',
+            }),
+            {
+                connectionStrategy: 'LAN_FIRST',
+                lanFirstTimeoutMs: 60_000,
+            },
+        )
+        await signaler.createRoom()
+        await signaler.connect()
+
+        await vi.advanceTimersByTimeAsync(1)
+        expect(setOffer).toHaveBeenCalledTimes(1)
+    })
+
     it('keeps LAN connection when connected before timeout', async () => {
         vi.useFakeTimers()
         vi.stubGlobal(
