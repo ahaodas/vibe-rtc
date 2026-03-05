@@ -551,6 +551,25 @@ export class RTCSignaler {
                     currentSessionId: this.sessionId ?? null,
                     phase: this.icePhase,
                 })
+                if (
+                    remoteSessionId &&
+                    remoteSessionId !== this.sessionId &&
+                    !this.remoteDescSet
+                ) {
+                    const isCurrentRemoteSession =
+                        await this.isCurrentRemoteRoleSession(remoteSessionId)
+                    if (!isCurrentRemoteSession) {
+                        this.logStaleSessionOnce('candidate', remoteSessionId)
+                        this.dbg.p(
+                            'signaling-recv:candidate ignored due to remote lease session mismatch',
+                            {
+                                sessionId: remoteSessionId,
+                                currentSessionId: this.sessionId ?? null,
+                            },
+                        )
+                        return
+                    }
+                }
                 const syncedSession = this.syncPeerToRemoteSession(
                     remoteSessionId,
                     candidateSignal.icePhase,
@@ -1480,6 +1499,17 @@ export class RTCSignaler {
         if (!remoteSessionId) return this.sessionId ?? undefined
         if (remoteSessionId === this.sessionId) return remoteSessionId
         if (source === 'answer' && this.role === 'caller') {
+            this.dbg.p(`sync-remote-session:${source}`, {
+                remoteSessionId,
+                currentSessionId: this.sessionId ?? null,
+                remotePhase: this.normalizeSignalIcePhase(remotePhaseRaw) ?? 'n/a',
+                targetPhase: this.icePhase,
+            })
+            this.sessionId = remoteSessionId
+            this.emitDebug(`sync-remote:${source}`)
+            return this.sessionId ?? undefined
+        }
+        if (source === 'candidate' && !this.remoteDescSet) {
             this.dbg.p(`sync-remote-session:${source}`, {
                 remoteSessionId,
                 currentSessionId: this.sessionId ?? null,

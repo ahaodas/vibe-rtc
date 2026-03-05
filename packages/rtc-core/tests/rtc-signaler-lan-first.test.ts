@@ -638,6 +638,86 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
         expect(FakeRTCPeerConnection.instances.length).toBe(3)
     })
 
+    it('keeps pre-offer candidates from active remote session on callee reload path', async () => {
+        vi.stubGlobal(
+            'RTCPeerConnection',
+            FakeRTCPeerConnection as unknown as typeof RTCPeerConnection,
+        )
+        stubRtcSessionDescription()
+
+        let offerCb:
+            | ((offer: RTCSessionDescriptionInit & { sessionId?: string }) => void)
+            | undefined
+        let callerIceCb:
+            | ((candidate: RTCIceCandidateInit & { sessionId?: string }) => void)
+            | undefined
+        const addIceSpy = vi.spyOn(FakeRTCPeerConnection.prototype, 'addIceCandidate')
+
+        const now = Date.now()
+        const signaler = new RTCSignaler(
+            'callee',
+            makeDb({
+                getRoom: async () => ({
+                    ...makeRoom(),
+                    slots: {
+                        caller: {
+                            participantId: 'caller-uid',
+                            sessionId: 'caller-session-active',
+                            joinedAt: now,
+                            lastSeenAt: now,
+                        },
+                        callee: {
+                            participantId: 'callee-uid',
+                            sessionId: 'callee-session-local',
+                            joinedAt: now,
+                            lastSeenAt: now,
+                        },
+                    },
+                }),
+                subscribeOnOffer: (cb) => {
+                    offerCb = cb as (
+                        offer: RTCSessionDescriptionInit & { sessionId?: string },
+                    ) => void
+                    return () => {}
+                },
+                subscribeOnCallerIceCandidate: (cb) => {
+                    callerIceCb = cb as (
+                        candidate: RTCIceCandidateInit & { sessionId?: string },
+                    ) => void
+                    return () => {}
+                },
+            }),
+            {
+                connectionStrategy: 'DEFAULT',
+            },
+        )
+
+        await signaler.joinRoom('room-callee-reload-candidate-first')
+        await signaler.connect()
+        expect(FakeRTCPeerConnection.instances.length).toBe(1)
+
+        callerIceCb?.({
+            candidate: 'candidate:1 1 udp 2122260223 192.0.2.10 5000 typ host',
+            sdpMid: '0',
+            sdpMLineIndex: 0,
+            sessionId: 'caller-session-active',
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+
+        offerCb?.({
+            type: 'offer',
+            sdp: 'v=0\r\no=caller 10 10 IN IP4 0.0.0.0\r\n',
+            sessionId: 'caller-session-active',
+        })
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+
+        expect(FakeRTCPeerConnection.instances.length).toBe(1)
+        expect(addIceSpy).toHaveBeenCalledTimes(1)
+    })
+
     it('caller ignores stale answers by forSessionId marker', async () => {
         vi.useFakeTimers()
         vi.stubGlobal(
