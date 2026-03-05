@@ -551,11 +551,7 @@ export class RTCSignaler {
                     currentSessionId: this.sessionId ?? null,
                     phase: this.icePhase,
                 })
-                if (
-                    remoteSessionId &&
-                    remoteSessionId !== this.sessionId &&
-                    !this.remoteDescSet
-                ) {
+                if (remoteSessionId && remoteSessionId !== this.sessionId && !this.remoteDescSet) {
                     const isCurrentRemoteSession =
                         await this.isCurrentRemoteRoleSession(remoteSessionId)
                     if (!isCurrentRemoteSession) {
