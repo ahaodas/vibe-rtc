@@ -1,0 +1,32 @@
+export const APP_BASE_PATH = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '')
+
+export const QR_FOREGROUND = '#c4b550ff'
+export const QR_BACKGROUND = '#3e4637'
+export const PROGRESS_STEP_PX = 10
+
+export const CREATE_PROGRESS_MAX_BEFORE_READY = 0.92
+export const CREATE_PROGRESS_IDLE_TICK_MS = 120
+export const CREATE_PROGRESS_IDLE_STEP = 0.008
+export const CREATE_PROGRESS_FINISH_TICK_MS = 40
+
+export const CONNECT_PROGRESS_MAX_BEFORE_READY = 0.92
+export const CONNECT_PROGRESS_TICK_MS = 140
+export const CONNECT_PROGRESS_STEP = 0.01
+
+export const MAX_VISIBLE_LOG_ENTRIES = 120
+
+export const WARNING_STICKY_MS = 8000
+export const WARNING_COOLDOWN_MS = 15000
+export const HIGH_DIRECT_NET_RTT_MS = 120
+export const HIGH_DIRECT_NET_RTT_STREAK = 5
+
+export const DEMO_LAN_FIRST_TIMEOUT_MS = 4500
+export const DEMO_PING_INTERVAL_MS = 1000
+export const DEMO_PING_WINDOW_SIZE = 5
+export const DEMO_NET_RTT_INTERVAL_MS = 1000
+
+export const FIRESTORE_EMULATOR_HOST =
+    import.meta.env.VITE_FIRESTORE_EMULATOR_HOST ?? import.meta.env.FIRESTORE_EMULATOR_HOST
+
+export const FIREBASE_AUTH_EMULATOR_HOST =
+    import.meta.env.VITE_FIREBASE_AUTH_EMULATOR_HOST ?? import.meta.env.FIREBASE_AUTH_EMULATOR_HOST
