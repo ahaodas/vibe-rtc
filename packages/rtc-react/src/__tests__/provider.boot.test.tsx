@@ -6,12 +6,12 @@ import { createMockSignalDB, createMockSignaler, type MockSignaler } from './tes
 let mockSignalerInstance: MockSignaler
 
 vi.mock('@vibe-rtc/rtc-core', () => {
-	class RTCSignaler {
-		constructor() {
-			Object.assign(this, mockSignalerInstance)
-		}
-	}
-	return { RTCSignaler }
+    class RTCSignaler {
+        constructor() {
+            Object.assign(this, mockSignalerInstance)
+        }
+    }
+    return { RTCSignaler }
 })
 
 describe('VibeRTCProvider - Boot', () => {
