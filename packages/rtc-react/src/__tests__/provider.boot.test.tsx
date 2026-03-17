@@ -163,7 +163,7 @@ describe('VibeRTCProvider - Boot', () => {
 
     it('renderLoading displayed during booting=true', async () => {
         const mockSignalDB = createMockSignalDB()
-        let resolveInit: (db: typeof mockSignalDB) => void
+        let resolveInit: ((db: typeof mockSignalDB) => void) | undefined
         const createSignalServer = vi.fn(
             () =>
                 new Promise<typeof mockSignalDB>((resolve) => {
@@ -205,7 +205,7 @@ describe('VibeRTCProvider - Boot', () => {
         resolveInit?.(mockSignalDB)
 
         await waitFor(() => {
-            expect(screen.queryByTestId('loading')).not.toBeInTheDocument()
+            expect(screen.queryByTestId('loading')).toBeNull()
         })
     })
 
