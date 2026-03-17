@@ -41,24 +41,25 @@ function toOverallStatus(state: VibeRTCState): VibeRTCOverallStatus {
 
 function toOperationScope(event?: string): VibeRTCOperationScope {
     if (!event) return 'system'
-    if (event.includes('error')) return 'error'
+    const loweredEvent = event.toLowerCase()
+    if (loweredEvent.includes('error')) return 'error'
     if (
-        event.includes('offer') ||
-        event.includes('answer') ||
-        event.includes('negotiation') ||
-        event.includes('epoch') ||
-        event.includes('joinRoom') ||
-        event.includes('createRoom')
+        loweredEvent.includes('offer') ||
+        loweredEvent.includes('answer') ||
+        loweredEvent.includes('negotiation') ||
+        loweredEvent.includes('epoch') ||
+        loweredEvent.includes('joinroom') ||
+        loweredEvent.includes('createroom')
     ) {
         return 'signaling'
     }
-    if (event.includes('dc') || event.includes('selected-path')) return 'data'
+    if (loweredEvent.includes('dc') || loweredEvent.includes('selected-path')) return 'data'
     if (
-        event.includes('ice') ||
-        event.includes('connection') ||
-        event.includes('connected') ||
-        event.includes('phase') ||
-        event.includes('pc')
+        loweredEvent.includes('ice') ||
+        loweredEvent.includes('connection') ||
+        loweredEvent.includes('connected') ||
+        loweredEvent.includes('phase') ||
+        loweredEvent.includes('pc')
     ) {
         return 'webrtc'
     }
