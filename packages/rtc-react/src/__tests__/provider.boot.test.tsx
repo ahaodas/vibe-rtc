@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useVibeRTC, VibeRTCProvider } from '../context'
 import { createMockSignalDB, createMockSignaler, type MockSignaler } from './test-utils'
@@ -22,6 +22,7 @@ describe('VibeRTCProvider - Boot', () => {
 
     afterEach(() => {
         vi.restoreAllMocks()
+        vi.useRealTimers()
     })
 
     it('renders with signalServer prop (immediate boot)', () => {
@@ -107,7 +108,9 @@ describe('VibeRTCProvider - Boot', () => {
         )
 
         // Trigger boot by calling createChannel
-        getByText('Create').click()
+        await act(async () => {
+            getByText('Create').click()
+        })
 
         await waitFor(() => {
             expect(createSignalServer).toHaveBeenCalled()
@@ -147,7 +150,9 @@ describe('VibeRTCProvider - Boot', () => {
             </VibeRTCProvider>,
         )
 
-        getByText('Create').click()
+        await act(async () => {
+            getByText('Create').click()
+        })
 
         await waitFor(() => {
             expect(screen.getByTestId('bootError').textContent).toContain(
@@ -184,7 +189,9 @@ describe('VibeRTCProvider - Boot', () => {
             </VibeRTCProvider>,
         )
 
-        getByText('Create').click()
+        await act(async () => {
+            getByText('Create').click()
+        })
 
         await waitFor(() => {
             expect(createSignalServer).toHaveBeenCalled()
@@ -232,15 +239,67 @@ describe('VibeRTCProvider - Boot', () => {
         )
 
         // First call
-        getByText('Create').click()
+        await act(async () => {
+            getByText('Create').click()
+        })
         await waitFor(() => {
             expect(createSignalServer).toHaveBeenCalledTimes(1)
         })
 
         // Second call should not re-initialize
-        getByText('Create').click()
+        await act(async () => {
+            getByText('Create').click()
+        })
         await waitFor(() => {
             expect(createSignalServer).toHaveBeenCalledTimes(1)
         })
+    })
+
+    it('cleanup on unmount disposes signaler and stops auto-heartbeat', async () => {
+        const mockSignalDB = createMockSignalDB({
+            auth: { currentUser: { uid: 'test-uid' } },
+            getRoom: vi.fn().mockResolvedValue({
+                roomId: 'room-cleanup',
+                callerUid: 'test-uid',
+                calleeUid: null,
+            }),
+        })
+        let ctx: ReturnType<typeof useVibeRTC> | null = null
+
+        function TestComponent() {
+            ctx = useVibeRTC()
+            return null
+        }
+
+        const { unmount } = render(
+            <VibeRTCProvider signalServer={mockSignalDB}>
+                <TestComponent />
+            </VibeRTCProvider>,
+        )
+
+        await waitFor(() => {
+            expect(ctx).not.toBeNull()
+        })
+
+        vi.useFakeTimers()
+
+        await act(async () => {
+            await ctx?.attachAuto('room-cleanup')
+        })
+        await act(async () => {
+            await Promise.resolve()
+        })
+        expect(mockSignalDB.heartbeat).toHaveBeenCalledTimes(1)
+
+        await act(async () => {
+            unmount()
+        })
+        expect(mockSignalerInstance.hangup).toHaveBeenCalledTimes(1)
+
+        await act(async () => {
+            vi.advanceTimersByTime(30_000)
+            await Promise.resolve()
+        })
+        expect(mockSignalDB.heartbeat).toHaveBeenCalledTimes(1)
     })
 })
