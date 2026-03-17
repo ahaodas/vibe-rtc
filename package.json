@@ -37,6 +37,8 @@
         "changeset:status": "changeset status",
         "version-packages": "changeset version",
         "release:tag": "changeset tag",
+        "release:check:prebump": "pnpm typecheck && pnpm precommit:packages && pnpm build:all && pnpm test:demo:e2e:emu && pnpm test:e2e:emu",
+        "release:check:postbump": "pnpm build:all && pnpm --filter @vibe-rtc/rtc-core test && pnpm --filter @vibe-rtc/rtc-react test && pnpm --filter @vibe-rtc/rtc-firebase test",
         "release": "changeset publish",
         "release:local": "bash ./scripts/release-local.sh",
         "release:local:publish": "bash ./scripts/release-local.sh --publish",

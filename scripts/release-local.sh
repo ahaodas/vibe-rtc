@@ -33,6 +33,9 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
+echo "==> Running dense pre-bump checks"
+pnpm release:check:prebump
+
 echo "==> Versioning packages with Changesets"
 pnpm version-packages
 
@@ -41,11 +44,8 @@ if [[ -z "$(git status --porcelain)" ]]; then
   exit 0
 fi
 
-echo "==> Running release checks"
-pnpm build:libs
-pnpm --filter @vibe-rtc/rtc-core test
-pnpm --filter @vibe-rtc/rtc-react test
-pnpm --filter @vibe-rtc/rtc-firebase test
+echo "==> Running post-bump sanity checks"
+pnpm release:check:postbump
 
 echo "==> Committing version updates"
 git add -A

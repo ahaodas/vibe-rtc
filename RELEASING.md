@@ -28,8 +28,13 @@ pnpm release:local
 
 This command:
 - validates clean git tree
+- runs dense pre-bump checks:
+  - `pnpm release:check:prebump`
+  - includes `typecheck`, package/app precommit checks, `build:all`, demo UI smoke e2e on emulator, and transport smoke e2e on emulator
 - runs `changeset version`
-- runs release checks (`build:libs` + tests)
+- runs post-bump sanity checks:
+  - `pnpm release:check:postbump`
+  - includes `build:all` + package unit/integration tests
 - creates release commit `chore(release): version packages`
 - creates package tags
 - creates one meta repository tag (default format `vYYYY.MM.DD-HHMM`)
@@ -60,23 +65,22 @@ Manual flow (if needed):
    - `git checkout master`
    - `git pull`
    - `git checkout -b release/<version-or-date>`
-2. Update versions/changelogs:
+2. Run dense pre-bump checks:
+   - `pnpm release:check:prebump`
+3. Update versions/changelogs:
    - `pnpm version-packages`
-3. Run checks:
-   - `pnpm build:libs`
-   - `pnpm --filter @vibe-rtc/rtc-core test`
-   - `pnpm --filter @vibe-rtc/rtc-react test`
-   - `pnpm --filter @vibe-rtc/rtc-firebase test`
-4. Commit version update:
+4. Run post-bump sanity checks:
+   - `pnpm release:check:postbump`
+5. Commit version update:
    - `git add .`
    - `git commit -m "chore(release): version packages"`
-5. Create tags:
+6. Create tags:
    - `pnpm release:tag`
-6. Merge release branch into `master` (prefer fast-forward)
-7. Push branch and tags:
+7. Merge release branch into `master` (prefer fast-forward)
+8. Push branch and tags:
    - `git push`
    - `git push --tags`
-8. Publish:
+9. Publish:
    - `pnpm release`
 
 ## Useful Commands
@@ -85,3 +89,7 @@ Manual flow (if needed):
   - `pnpm changeset:status`
 - Add new changeset:
   - `pnpm changeset`
+- Dense release gate before version bump:
+  - `pnpm release:check:prebump`
+- Post-bump sanity gate:
+  - `pnpm release:check:postbump`
