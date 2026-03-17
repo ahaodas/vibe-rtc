@@ -7,8 +7,13 @@
         "dev": "vite",
         "build": "vite build",
         "preview": "vite preview --host",
+        "test": "vitest run --passWithNoTests",
+        "test:watch": "vitest",
+        "test:e2e": "playwright test --project=chromium",
+        "test:e2e:headed": "playwright test --project=chromium --headed",
+        "show-report:e2e": "playwright show-report",
         "clean": "rimraf dist",
-        "precommit": "pnpm exec biome check src"
+        "precommit": "pnpm exec biome check src && pnpm run test"
     },
     "dependencies": {
         "@types/qrcode": "^1.5.6",
@@ -21,11 +26,17 @@
         "react-router-dom": "^7.9.5"
     },
     "devDependencies": {
+        "@playwright/test": "^1.56.1",
+        "@testing-library/jest-dom": "^6.9.1",
+        "@testing-library/react": "^16.3.2",
+        "@testing-library/user-event": "^14.6.1",
         "@types/react": "^18.3.26",
         "@types/react-dom": "^18.3.7",
         "@vitejs/plugin-react": "^5.1.0",
+        "jsdom": "^29.0.0",
         "rimraf": "^6.1.0",
         "typescript": "^5.9.3",
-        "vite": "^5.4.21"
+        "vite": "^5.4.21",
+        "vitest": "^4.0.4"
     }
 }
