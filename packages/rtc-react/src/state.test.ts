@@ -1,3 +1,4 @@
+import type { DebugState } from '@vibe-rtc/rtc-core'
 import { describe, expect, it } from 'vitest'
 import { initialState, mapPcState, normalizeError, reducer } from './state'
 
@@ -110,11 +111,51 @@ describe('rtc-react state helpers', () => {
     })
 
     it('handles SET_DEBUG_DATA action', () => {
-        const debugState = {
-            pcState: 'connected' as RTCPeerConnectionState,
-            iceState: 'completed' as RTCIceConnectionState,
-            phase: 'STUN' as const,
+        const debugState: DebugState = {
+            ts: 1_735_000_000_000,
+            roomId: 'test-room-123',
+            role: 'caller',
+            phase: 'connected',
+            makingOffer: false,
+            polite: false,
+            pcState: 'connected',
+            iceState: 'completed',
+            signalingState: 'stable',
+            fast: { state: 'open', ba: 0 },
+            reliable: { state: 'open', ba: 0 },
+            pendingIce: 0,
+            retries: { soft: 0, hard: 0 },
+            timers: { softPending: false, hardPending: false },
+            connectionStrategy: 'DEFAULT',
+            icePhase: 'STUN',
             pcGeneration: 1,
+            sessionId: 'session-1',
+            participantId: 'participant-1',
+            candidateStats: {
+                localSeen: { host: 0, srflx: 0, relay: 0, unknown: 0 },
+                localSent: { host: 0, srflx: 0, relay: 0, unknown: 0 },
+                localDropped: { host: 0, srflx: 0, relay: 0, unknown: 0 },
+                remoteSeen: { host: 0, srflx: 0, relay: 0, unknown: 0 },
+                remoteAccepted: { host: 0, srflx: 0, relay: 0, unknown: 0 },
+                remoteDropped: { host: 0, srflx: 0, relay: 0, unknown: 0 },
+            },
+            selectedPath: 'host',
+            ping: {
+                lastRttMs: null,
+                smoothedRttMs: null,
+                jitterMs: null,
+                lastUpdatedAt: null,
+                status: 'idle',
+                lastSeq: null,
+                intervalMs: 1000,
+                windowSize: 5,
+            },
+            netRtt: {
+                rttMs: null,
+                jitterMs: null,
+                lastUpdatedAt: 1_735_000_000_000,
+                status: 'idle',
+            },
             lastEvent: 'connected',
         }
         const s = reducer(initialState, { type: 'SET_DEBUG_DATA', debugState })
