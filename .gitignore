@@ -14,6 +14,7 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+firestore-debug.log*
 /.pnp
 .pnp.js
 
@@ -25,3 +26,5 @@ yarn-error.log*
 /httpRequests/
 packages/rtc-e2e/playwright-report/
 packages/rtc-e2e/test-results/
+apps/demo/playwright-report/
+apps/demo/test-results/
