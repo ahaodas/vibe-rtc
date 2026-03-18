@@ -1,5 +1,5 @@
 {
-  "packages/rtc-core": "0.3.5",
-  "packages/rtc-firebase": "0.2.5",
-  "packages/rtc-react": "0.3.6"
+  "packages/rtc-core": "0.3.6",
+  "packages/rtc-firebase": "0.2.6",
+  "packages/rtc-react": "0.3.7"
 }
