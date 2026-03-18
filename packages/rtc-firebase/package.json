@@ -1,6 +1,6 @@
 {
     "name": "@vibe-rtc/rtc-firebase",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "type": "module",
     "exports": {
         ".": {
