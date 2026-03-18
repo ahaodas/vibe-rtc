@@ -1,5 +1,19 @@
 # @vibe-rtc/rtc-firebase
 
+## [0.2.7](https://github.com/ahaodas/vibe-rtc/compare/rtc-firebase-v0.2.6...rtc-firebase-v0.2.7) (2026-03-18)
+
+
+### Bug Fixes
+
+* **rtc-firebase:** define git repository URL for package metadata ([4837a2f](https://github.com/ahaodas/vibe-rtc/commit/4837a2ffd0fb6cb64d7c8b16befd46773dfeae9f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @vibe-rtc/rtc-core bumped to 0.3.7
+
 ## [0.2.6](https://github.com/ahaodas/vibe-rtc/compare/rtc-firebase-v0.2.5...rtc-firebase-v0.2.6) (2026-03-18)
 
 
