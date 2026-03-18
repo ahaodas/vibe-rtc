@@ -17,7 +17,6 @@
     },
     "dependencies": {
         "@types/qrcode": "^1.5.6",
-        "@vibe-rtc/rtc-core": "workspace:*",
         "@vibe-rtc/rtc-firebase": "workspace:*",
         "@vibe-rtc/rtc-react": "workspace:*",
         "qrcode": "^1.5.4",

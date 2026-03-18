@@ -8,7 +8,6 @@
         "prepare": "husky",
         "install:all": "pnpm install -w --frozen-lockfile",
         "build:libs": "pnpm -r --filter @vibe-rtc/rtc-core --filter @vibe-rtc/rtc-firebase run build",
-        "build:sdk": "pnpm --filter @vibe-rtc/sdk run build",
         "build:all": "pnpm run build:libs && pnpm run build:sdk",
         "test:int": "pnpm --filter @vibe-rtc/rtc-firebase run test",
         "test:demo:e2e": "bash ./scripts/free-port.sh 4173 && CI=1 pnpm --filter @vibe-rtc/demo run test:e2e",
@@ -64,8 +63,5 @@
         "husky": "^9.1.7",
         "tsup": "^8.5.0",
         "typescript": "^5.9.3"
-    },
-    "dependencies": {
-        "rxjs": "^7.8.2"
     }
 }
