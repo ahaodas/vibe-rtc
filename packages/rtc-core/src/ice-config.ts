@@ -44,10 +44,6 @@ export function extractTurnOnlyIceServers(iceServers: RTCIceServer[]): RTCIceSer
     return filterIceServersByUrls(cloneIceServers(iceServers), isTurnUrl)
 }
 
-// Backward-compatible aliases.
-export const extractStunOnly = extractStunOnlyIceServers
-export const extractTurnOnly = extractTurnOnlyIceServers
-
 function parseCsvUrls(raw: string): string[] {
     return raw
         .split(',')
