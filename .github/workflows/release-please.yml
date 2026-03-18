@@ -59,6 +59,9 @@ jobs:
       - name: Test rtc-core
         run: pnpm --filter @vibe-rtc/rtc-core test
 
+      - name: Build workspace libs for downstream tests
+        run: pnpm build:libs
+
       - name: Test rtc-react
         run: pnpm --filter @vibe-rtc/rtc-react test
 
