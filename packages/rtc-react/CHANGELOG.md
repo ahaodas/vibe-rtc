@@ -1,5 +1,14 @@
 # @vibe-rtc/rtc-react
 
+## [0.3.6](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.5...rtc-react-v0.3.6) (2026-03-18)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @vibe-rtc/rtc-core bumped to 0.3.5
+
 ## [0.3.5](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.4...rtc-react-v0.3.5) (2026-03-18)
 
 
