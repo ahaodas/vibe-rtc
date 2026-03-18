@@ -1,5 +1,12 @@
 # @vibe-rtc/rtc-core
 
+## [0.3.6](https://github.com/ahaodas/vibe-rtc/compare/rtc-core-v0.3.5...rtc-core-v0.3.6) (2026-03-18)
+
+
+### Bug Fixes
+
+* **rtc-core:** refine package metadata ([b03c9d2](https://github.com/ahaodas/vibe-rtc/commit/b03c9d2a148b8781a073626904760955b261e929))
+
 ## [0.3.5](https://github.com/ahaodas/vibe-rtc/compare/rtc-core-v0.3.4...rtc-core-v0.3.5) (2026-03-18)
 
 
