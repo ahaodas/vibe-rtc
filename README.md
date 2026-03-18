@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/ahaodas/vibe-rtc/actions/workflows/ci.yml/badge.svg)](https://github.com/ahaodas/vibe-rtc/actions/workflows/ci.yml)
 [![Pages](https://github.com/ahaodas/vibe-rtc/actions/workflows/pages.yml/badge.svg)](https://github.com/ahaodas/vibe-rtc/actions/workflows/pages.yml)
-[![Version](https://img.shields.io/github/v/tag/ahaodas/vibe-rtc?label=version)](https://github.com/ahaodas/vibe-rtc/tags)
 
 Monorepo with tools for stable browser-to-browser WebRTC data connections with signaling via Firebase Firestore.
 
@@ -127,18 +126,7 @@ Backward-compatible aliases for Metered are also supported:
 If no TURN credentials are provided, demo uses STUN-only mode (less reliable on restrictive NAT/firewall networks).
 
 ## Release Workflow
-
-The repo uses Changesets.
-
-```bash
-pnpm changeset
-pnpm version-packages
-pnpm build:libs
-pnpm release:tag
-pnpm release
-```
-
-See also `RELEASING.md`.
+See `RELEASING.md`.
 
 ## Git Hooks
 

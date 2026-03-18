@@ -1,95 +1,104 @@
 # Releasing
 
-This repository uses Changesets for package versioning and changelog generation.
+This repository uses `release-please` for package versioning, changelog generation, Git tags, and GitHub Releases.
 
-## Prerequisites
+Published packages:
+- `@vibe-rtc/rtc-core`
+- `@vibe-rtc/rtc-firebase`
+- `@vibe-rtc/rtc-react`
+
+Not part of npm release flow:
+- `@vibe-rtc/rtc-e2e`
+- `@vibe-rtc/demo`
+
+# Prerequisites
 
 - Installed dependencies: `pnpm install`
-- NPM auth configured (`npm whoami` works) for publish
 - Clean working tree
+- GitHub Actions enabled for the repository
+- npm trusted publishing configured for each published package:
+    - `@vibe-rtc/rtc-core`
+    - `@vibe-rtc/rtc-firebase`
+    - `@vibe-rtc/rtc-react`
 
-## Daily Development
+# Daily Development
 
 For every change that should affect a published package:
 
-1. `pnpm changeset`
-2. Select affected package(s)
-3. Select bump type (`patch` / `minor` / `major`)
-4. Write a short release note
-5. Commit code + `.changeset/*.md`
+1. Commit changes using Conventional Commits
+2. Open a normal PR into `master`
+3. Merge the PR
 
-## Local Release Flow (release branch + tags + merge)
+Recommended commit discipline:
+- keep commits focused by package when possible
+- avoid mixing `demo` / infra / multiple package changes in one commit unless really necessary
+- use correct scopes such as:
+    - `fix(rtc-core): ...`
+    - `feat(rtc-firebase): ...`
+    - `fix(rtc-react): ...`
 
-Recommended single-command flow:
+Version bump rules are derived automatically from commit history:
+- `fix:` -> patch
+- `feat:` -> minor
+- `feat!:` or `BREAKING CHANGE:` -> major
 
-```bash
-pnpm release:local
-```
+# Release Flow
 
-This command:
-- validates clean git tree
-- runs dense pre-bump checks:
-  - `pnpm release:check:prebump`
-  - includes `typecheck`, package/app precommit checks, `build:all`, demo UI smoke e2e on emulator, and transport smoke e2e on emulator
-- runs `changeset version`
-- runs post-bump sanity checks:
-  - `pnpm release:check:postbump`
-  - includes `build:all` + package unit/integration tests
-- creates release commit `chore(release): version packages`
-- creates package tags
-- creates one meta repository tag (default format `vYYYY.MM.DD-HHMM`)
+Releases are created automatically from commits already merged into `master`.
 
-Options:
-- `pnpm release:local:publish` -> also publish to npm
-- `pnpm release:local:gh` -> also create GitHub Release (requires `gh` CLI)
-- `pnpm release:local:full` -> publish + create GitHub Release
-- custom meta tag: `bash ./scripts/release-local.sh --meta-tag v0.2.0`
+## How it works
 
-Recommendation: keep npm publish manual/explicit (`--publish`) to avoid accidental public releases.
+On every push to `master`, GitHub Actions runs `release-please`:
 
-## npm Publish from CI
+1. analyzes Conventional Commits since the previous package release
+2. updates or creates a Release PR
+3. proposes version bumps and package changelog updates
+4. after the Release PR is merged:
+    - creates package tags
+    - creates GitHub Releases
+    - runs verification
+    - publishes packages to npm
 
-`Publish Packages to npm` workflow (`.github/workflows/publish-npm.yml`) runs on meta release tags (`v*`):
+There is no manual local version bump flow anymore.
 
-1. verifies tests/build
-2. publishes packages via `pnpm release` (changesets)
-3. creates/updates GitHub Release for the same tag with a description composed from package `CHANGELOG.md` entries
+# Release PR
 
-Required repository secret:
+`release-please` maintains a dedicated Release PR for publishable packages.
 
-- `NPM_TOKEN` (automation/granular token with publish rights and 2FA bypass for CI)
+Recommended merge method:
+- `Rebase and merge`
 
-Manual flow (if needed):
+# npm Publish from CI
 
-1. Create release branch from `master`:
-   - `git checkout master`
-   - `git pull`
-   - `git checkout -b release/<version-or-date>`
-2. Run dense pre-bump checks:
-   - `pnpm release:check:prebump`
-3. Update versions/changelogs:
-   - `pnpm version-packages`
-4. Run post-bump sanity checks:
-   - `pnpm release:check:postbump`
-5. Commit version update:
-   - `git add .`
-   - `git commit -m "chore(release): version packages"`
-6. Create tags:
-   - `pnpm release:tag`
-7. Merge release branch into `master` (prefer fast-forward)
-8. Push branch and tags:
-   - `git push`
-   - `git push --tags`
-9. Publish:
-   - `pnpm release`
+npm publish is executed inside `.github/workflows/release-please.yml`.
 
-## Useful Commands
+Flow after merging the Release PR:
 
-- Check pending changesets:
-  - `pnpm changeset:status`
-- Add new changeset:
-  - `pnpm changeset`
-- Dense release gate before version bump:
-  - `pnpm release:check:prebump`
-- Post-bump sanity gate:
-  - `pnpm release:check:postbump`
+1. `release-please` creates package tags and GitHub Releases
+2. `verify` job runs package tests/build checks
+3. `publish` job builds publishable packages and publishes them to npm
+
+Publishing uses npm trusted publishing via GitHub OIDC.
+No long-lived `NPM_TOKEN` secret is required.
+
+# Useful Commands
+
+General development:
+- `pnpm install`
+- `pnpm lint`
+- `pnpm typecheck`
+- `pnpm test:int`
+- `pnpm test:e2e:emu`
+- `pnpm test:demo:e2e:emu`
+
+Manual local verification before merging important PRs:
+- `pnpm --filter @vibe-rtc/rtc-core test`
+- `pnpm --filter @vibe-rtc/rtc-react test`
+- `pnpm --filter @vibe-rtc/rtc-firebase test`
+- `pnpm build:libs`
+
+# Notes
+
+- `release-please` uses path-based package changelog attribution, not commit-scope-based attribution
+- dependency bumps between workspace packages may produce dependency entries in downstream package changelogs
+- clean, package-focused commits produce much better release notes

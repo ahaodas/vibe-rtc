@@ -26,5 +26,6 @@ firestore-debug.log*
 /httpRequests/
 packages/rtc-e2e/playwright-report/
 packages/rtc-e2e/test-results/
+/packages/rtc-firebase/.fb-data/
 apps/demo/playwright-report/
 apps/demo/test-results/
