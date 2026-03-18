@@ -1,5 +1,12 @@
 # @vibe-rtc/rtc-core
 
+## [0.3.1](https://github.com/ahaodas/vibe-rtc/compare/rtc-core-v0.3.0...rtc-core-v0.3.1) (2026-03-18)
+
+
+### Bug Fixes
+
+* **rtc-core:** remove unused backward-compatible aliases ([095fa5d](https://github.com/ahaodas/vibe-rtc/commit/095fa5d26c925d86e5ffbda7e1f669999963f8cd))
+
 ## [0.3.0](https://github.com/ahaodas/vibe-rtc/compare/rtc-core-v0.2.1...rtc-core-v0.3.0) (2026-03-18)
 
 
