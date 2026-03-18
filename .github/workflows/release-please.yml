@@ -70,7 +70,7 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
-    needs: [release-please, verify]
+    needs: [ release-please, verify ]
     if: ${{ (needs.release-please.outputs.rtc_core_released == 'true' || needs.release-please.outputs.rtc_firebase_released == 'true' || needs.release-please.outputs.rtc_react_released == 'true') && needs.verify.result == 'success' }}
     env:
       NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -97,16 +97,11 @@ jobs:
       - name: Validate npm token
         run: test -n "$NODE_AUTH_TOKEN" || (echo "Missing NPM_TOKEN secret"; exit 1)
 
-      - name: Configure npm auth
-        run: |
-          echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
-          npm whoami
-
       - name: Build publishable packages
         run: |
           pnpm --filter @vibe-rtc/rtc-core build
           pnpm --filter @vibe-rtc/rtc-firebase build
-          pnpm --filter @vibe-rtc/rtc-react build    
+          pnpm --filter @vibe-rtc/rtc-react build
 
       - name: Publish packages
         run: pnpm -r --filter @vibe-rtc/rtc-core --filter @vibe-rtc/rtc-firebase --filter @vibe-rtc/rtc-react publish --access public --no-git-checks --report-summary
