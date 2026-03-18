@@ -1,5 +1,14 @@
 # @vibe-rtc/rtc-firebase
 
+## [0.2.4](https://github.com/ahaodas/vibe-rtc/compare/rtc-firebase-v0.2.3...rtc-firebase-v0.2.4) (2026-03-18)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @vibe-rtc/rtc-core bumped to 0.3.4
+
 ## [0.2.3](https://github.com/ahaodas/vibe-rtc/compare/rtc-firebase-v0.2.2...rtc-firebase-v0.2.3) (2026-03-18)
 
 
