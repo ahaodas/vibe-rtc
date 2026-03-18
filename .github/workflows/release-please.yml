@@ -72,8 +72,6 @@ jobs:
     runs-on: ubuntu-latest
     needs: [ release-please, verify ]
     if: ${{ (needs.release-please.outputs.rtc_core_released == 'true' || needs.release-please.outputs.rtc_firebase_released == 'true' || needs.release-please.outputs.rtc_react_released == 'true') && needs.verify.result == 'success' }}
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
     steps:
       - name: Checkout
@@ -94,9 +92,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Validate npm token
-        run: test -n "$NODE_AUTH_TOKEN" || (echo "Missing NPM_TOKEN secret"; exit 1)
-
       - name: Build publishable packages
         run: |
           pnpm --filter @vibe-rtc/rtc-core build
@@ -104,4 +99,4 @@ jobs:
           pnpm --filter @vibe-rtc/rtc-react build
 
       - name: Publish packages
-        run: pnpm -r --filter @vibe-rtc/rtc-core --filter @vibe-rtc/rtc-firebase --filter @vibe-rtc/rtc-react publish --access public --no-git-checks --report-summary
+        run: pnpm -r --filter @vibe-rtc/rtc-core --filter @vibe-rtc/rtc-firebase --filter @vibe-rtc/rtc-react publish --access public --no-git-checks --report-summary --provenance
