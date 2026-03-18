@@ -17,10 +17,10 @@
     "types": "./dist/index.d.ts",
     "exports": {
         ".": {
-            "development": "./src/index.ts",
             "types": "./dist/index.d.ts",
             "import": "./dist/index.mjs",
-            "require": "./dist/index.cjs"
+            "require": "./dist/index.cjs",
+            "default": "./dist/index.mjs"
         }
     },
     "files": [
