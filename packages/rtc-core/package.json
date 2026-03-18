@@ -6,7 +6,8 @@
     "module": "dist/index.mjs",
     "types": "dist/index.d.ts",
     "keywords": [
-        "web-rtc"
+        "web-rtc",
+        "webrtc"
     ],
     "sideEffects": false,
     "publishConfig": {
