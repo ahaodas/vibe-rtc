@@ -32,7 +32,7 @@ npm i @vibe-rtc/sdk@latest
 ## Common Commands
 
 ```bash
-pnpm build:all
+pnpm build:libs
 pnpm test:int
 pnpm test:e2e
 pnpm lint
@@ -47,8 +47,8 @@ rebuild changed package(s) and their consumers before running app/type checks.
 Typical flow:
 
 ```bash
-# Rebuild all libraries and SDK
-pnpm build:all
+# Rebuild all libraries
+pnpm build:libs
 
 # Or rebuild specific chain explicitly
 pnpm --filter @vibe-rtc/rtc-core build
@@ -133,7 +133,7 @@ The repo uses Changesets.
 ```bash
 pnpm changeset
 pnpm version-packages
-pnpm build:all
+pnpm build:libs
 pnpm release:tag
 pnpm release
 ```

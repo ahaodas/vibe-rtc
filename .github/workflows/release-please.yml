@@ -68,9 +68,6 @@ jobs:
       - name: Test rtc-firebase
         run: pnpm --filter @vibe-rtc/rtc-firebase test
 
-      - name: Build libraries
-        run: pnpm build:all
-
   publish:
     runs-on: ubuntu-latest
     needs: [release-please, verify]
@@ -104,6 +101,12 @@ jobs:
         run: |
           echo "//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}" > ~/.npmrc
           npm whoami
+
+      - name: Build publishable packages
+        run: |
+          pnpm --filter @vibe-rtc/rtc-core build
+          pnpm --filter @vibe-rtc/rtc-firebase build
+          pnpm --filter @vibe-rtc/rtc-react build    
 
       - name: Publish packages
         run: pnpm -r --filter @vibe-rtc/rtc-core --filter @vibe-rtc/rtc-firebase --filter @vibe-rtc/rtc-react publish --access public --no-git-checks --report-summary
