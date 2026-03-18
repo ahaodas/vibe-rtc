@@ -4,6 +4,9 @@
     "description": "React adapter (hook) for vibe-rtc core",
     "type": "module",
     "private": false,
+    "keywords": [
+        "web-rtc"
+    ],
     "main": "./dist/index.cjs",
     "module": "./dist/index.mjs",
     "types": "./dist/index.d.ts",
