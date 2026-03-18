@@ -7,6 +7,10 @@
     "keywords": [
         "web-rtc"
     ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/ahaodas/vibe-rtc"
+    },
     "main": "./dist/index.cjs",
     "module": "./dist/index.mjs",
     "types": "./dist/index.d.ts",
