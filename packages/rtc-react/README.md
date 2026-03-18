@@ -1,4 +1,5 @@
-# @vibe-rtc/rtc-react
+# @vibe-rtc/rtc-react 
+[![npm version](https://img.shields.io/npm/v/@vibe-rtc/rtc-react)](https://www.npmjs.com/package/@vibe-rtc/rtc-react)
 
 React integration for `@vibe-rtc/rtc-core`.
 

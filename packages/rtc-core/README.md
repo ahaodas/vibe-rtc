@@ -1,4 +1,5 @@
-# @vibe-rtc/rtc-core
+# @vibe-rtc/rtc-core 
+[![npm version](https://img.shields.io/npm/v/@vibe-rtc/rtc-core)](https://www.npmjs.com/package/@vibe-rtc/rtc-core)
 
 Core WebRTC signaling/transport package with reconnect behavior and typed errors.
 

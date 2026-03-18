@@ -1,4 +1,5 @@
-# @vibe-rtc/rtc-firebase
+# @vibe-rtc/rtc-firebase 
+[![npm version](https://img.shields.io/npm/v/@vibe-rtc/rtc-firebase)](https://www.npmjs.com/package/@vibe-rtc/rtc-firebase)
 
 Firebase/Firestore signaling adapter for `@vibe-rtc/rtc-core`.
 
