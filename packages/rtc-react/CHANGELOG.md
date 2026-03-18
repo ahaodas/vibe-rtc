@@ -1,5 +1,12 @@
 # @vibe-rtc/rtc-react
 
+## [0.3.9](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.8...rtc-react-v0.3.9) (2026-03-18)
+
+
+### Bug Fixes
+
+* **rtc-react:** remove development export from package entrypoints ([a2f6224](https://github.com/ahaodas/vibe-rtc/commit/a2f622405825dd9fc37f54d148b58f3dd2ebecf9))
+
 ## [0.3.8](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.7...rtc-react-v0.3.8) (2026-03-18)
 
 
