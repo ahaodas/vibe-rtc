@@ -1,5 +1,19 @@
 # @vibe-rtc/rtc-react
 
+## [0.3.8](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.7...rtc-react-v0.3.8) (2026-03-18)
+
+
+### Bug Fixes
+
+* **rtc-react:** define git repository URL for package metadata ([6f76389](https://github.com/ahaodas/vibe-rtc/commit/6f76389b5a40beb5621d1c1432e440b94ffe7bec))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @vibe-rtc/rtc-core bumped to 0.3.7
+
 ## [0.3.7](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.6...rtc-react-v0.3.7) (2026-03-18)
 
 

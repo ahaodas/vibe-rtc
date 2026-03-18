@@ -1,5 +1,12 @@
 # @vibe-rtc/rtc-core
 
+## [0.3.7](https://github.com/ahaodas/vibe-rtc/compare/rtc-core-v0.3.6...rtc-core-v0.3.7) (2026-03-18)
+
+
+### Bug Fixes
+
+* **rtc-core:** define git repository URL for package metadata ([ace51e8](https://github.com/ahaodas/vibe-rtc/commit/ace51e88aa275e90791f9821faf5aecf28676c18))
+
 ## [0.3.6](https://github.com/ahaodas/vibe-rtc/compare/rtc-core-v0.3.5...rtc-core-v0.3.6) (2026-03-18)
 
 
