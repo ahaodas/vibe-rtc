@@ -30,6 +30,7 @@
         "lint": "biome lint",
         "precommit:packages": "pnpm -r --filter './packages/*' --filter './apps/*' run precommit",
         "typecheck": "bash -lc 'set -euo pipefail; for f in packages/*/tsconfig.json apps/*/tsconfig.json; do [ -f \"$f\" ] && pnpm exec tsc -p \"$f\" --noEmit; done'",
+        "typecheck:if-ts-staged": "bash ./scripts/typecheck-if-ts-staged.sh",
         "commitlint": "commitlint --config commitlint.config.cjs"
     },
     "workspaces": {

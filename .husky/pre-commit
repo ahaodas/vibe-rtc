@@ -7,7 +7,7 @@ pnpm exec biome check --write --staged --no-errors-on-unmatched
 pnpm exec biome check --staged --no-errors-on-unmatched
 
 # Run workspace type checks before heavier package precommit scripts.
-pnpm run typecheck
+pnpm run typecheck:if-ts-staged
 
 # Run package-level checks: Biome in each package and unit tests where configured.
 pnpm run precommit:packages
