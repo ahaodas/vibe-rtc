@@ -7,7 +7,6 @@
     "types": "dist/index.d.ts",
     "keywords": [
         "web-rtc",
-        "webrtc",
         "data-channel"
     ],
     "sideEffects": false,
