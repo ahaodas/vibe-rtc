@@ -6,6 +6,8 @@ import { MessageComposer } from '@/features/demo/components/MessageComposer'
 import { OperationLog } from '@/features/demo/components/OperationLog'
 import { SessionHeader } from '@/features/demo/components/session/SessionHeader'
 import { SessionOverlays } from '@/features/demo/components/session/SessionOverlays'
+import { SharedCanvasModal } from '@/features/demo/features/sharedCanvas/components/SharedCanvasModal'
+import { useSharedCanvas } from '@/features/demo/features/sharedCanvas/hooks/useSharedCanvas'
 import { useSessionActions } from '@/features/demo/hooks/useSessionActions'
 import { useSessionConnectProgress } from '@/features/demo/hooks/useSessionConnectProgress'
 import { useSessionModalState } from '@/features/demo/hooks/useSessionModalState'
@@ -31,6 +33,7 @@ import {
     sessionReducer,
 } from '@/features/demo/model/sessionReducer'
 import type { AttachRole, RouteStrategyMode } from '@/features/demo/model/types'
+import { AppButton } from '@/shared/ui/AppButton'
 
 const NOOP_PING_HANDLER = () => {}
 
@@ -100,6 +103,14 @@ export function SessionPage() {
         (value: typeof state.netWarning) => dispatch(sessionActions.setNetWarning(value)),
         [],
     )
+    const sharedCanvas = useSharedCanvas({ role: routeRole })
+
+    const handleFastMessage = useCallback(
+        (message: string) => {
+            sharedCanvas.handleIncomingFastMessage(message)
+        },
+        [sharedCanvas.handleIncomingFastMessage],
+    )
 
     const handleTakenOver = useCallback(
         (payload: { bySessionId?: string }) => {
@@ -119,6 +130,7 @@ export function SessionPage() {
         logMessages: true,
         onPing: NOOP_PING_HANDLER,
         onTakenOver: handleTakenOver,
+        onFastMessage: handleFastMessage,
     })
 
     useSessionTracing({
@@ -200,6 +212,30 @@ export function SessionPage() {
         removeRoomOnLeave: state.removeRoomOnLeave,
         messageText: state.messageText,
     })
+    const openCanvas = useCallback(() => {
+        sharedCanvas.openFromLocal(rtc.sendFast)
+    }, [rtc.sendFast, sharedCanvas.openFromLocal])
+    const closeCanvas = useCallback(() => {
+        sharedCanvas.closeFromLocal(rtc.sendFast)
+    }, [rtc.sendFast, sharedCanvas.closeFromLocal])
+    const clearCanvas = useCallback(() => {
+        sharedCanvas.clearFromLocal(rtc.sendFast)
+    }, [rtc.sendFast, sharedCanvas.clearFromLocal])
+    const handleCanvasStrokeStart = useCallback(
+        (point: { x: number; y: number }) => {
+            sharedCanvas.startLocalStroke(rtc.sendFast, point)
+        },
+        [rtc.sendFast, sharedCanvas.startLocalStroke],
+    )
+    const handleCanvasStrokeMove = useCallback(
+        (point: { x: number; y: number }) => {
+            sharedCanvas.appendLocalStrokePoint(rtc.sendFast, point)
+        },
+        [rtc.sendFast, sharedCanvas.appendLocalStrokePoint],
+    )
+    const handleCanvasStrokeEnd = useCallback(() => {
+        sharedCanvas.endLocalStroke(rtc.sendFast)
+    }, [rtc.sendFast, sharedCanvas.endLocalStroke])
 
     const showQrButton =
         routeRole === 'caller' &&
@@ -264,6 +300,16 @@ export function SessionPage() {
                         dispatch(sessionActions.setLeaveConfirmOpen(true))
                     }}
                 />
+                <div className="sessionToolRow">
+                    <AppButton
+                        className="canvasToggleBtn"
+                        disabled={!channelReadyForMessages}
+                        onClick={sharedCanvas.isOpen ? closeCanvas : openCanvas}
+                        testId="shared-canvas-toggle-btn"
+                    >
+                        {sharedCanvas.isOpen ? 'Close Canvas' : 'Open Canvas'}
+                    </AppButton>
+                </div>
 
                 <OperationLog
                     entries={visibleLog}
@@ -286,6 +332,16 @@ export function SessionPage() {
 
                 <Credits />
             </section>
+            <SharedCanvasModal
+                isOpen={sharedCanvas.isOpen}
+                strokes={sharedCanvas.strokes}
+                roleColors={sharedCanvas.roleColors}
+                onClose={closeCanvas}
+                onClear={clearCanvas}
+                onStrokeStart={handleCanvasStrokeStart}
+                onStrokeMove={handleCanvasStrokeMove}
+                onStrokeEnd={handleCanvasStrokeEnd}
+            />
         </main>
     )
 }

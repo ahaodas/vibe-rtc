@@ -76,6 +76,53 @@ async function sendMessage(page: Page, mode: 'fast' | 'reliable', text: string) 
     await expect(input).toHaveValue('')
 }
 
+async function drawCanvasStroke(
+    page: Page,
+    from: { nx: number; ny: number },
+    to: { nx: number; ny: number },
+) {
+    const canvas = page.getByTestId('shared-canvas-element')
+    const bounds = await canvas.boundingBox()
+    if (!bounds) throw new Error('Canvas bounds are not available')
+
+    const fromX = bounds.x + bounds.width * from.nx
+    const fromY = bounds.y + bounds.height * from.ny
+    const toX = bounds.x + bounds.width * to.nx
+    const toY = bounds.y + bounds.height * to.ny
+
+    await page.mouse.move(fromX, fromY)
+    await page.mouse.down()
+    await page.mouse.move(toX, toY, { steps: 8 })
+    await page.mouse.up()
+}
+
+async function canvasHasInkNear(page: Page, nx: number, ny: number): Promise<boolean> {
+    return await page.getByTestId('shared-canvas-element').evaluate(
+        (canvas, point) => {
+            const context = canvas.getContext('2d')
+            if (!context) return false
+            const cx = Math.round(canvas.width * point.nx)
+            const cy = Math.round(canvas.height * point.ny)
+            const radius = 12
+            const minX = Math.max(0, cx - radius)
+            const maxX = Math.min(canvas.width - 1, cx + radius)
+            const minY = Math.max(0, cy - radius)
+            const maxY = Math.min(canvas.height - 1, cy + radius)
+
+            const image = context.getImageData(minX, minY, maxX - minX + 1, maxY - minY + 1)
+            for (let index = 0; index < image.data.length; index += 4) {
+                const r = image.data[index]
+                const g = image.data[index + 1]
+                const b = image.data[index + 2]
+                const a = image.data[index + 3]
+                if (a > 0 && !(r === 255 && g === 255 && b === 255)) return true
+            }
+            return false
+        },
+        { nx, ny },
+    )
+}
+
 test('@demo-smoke join modal routes to callee session path', async ({ page }) => {
     const assertNoUnexpectedErrors = collectUnexpectedBrowserErrors(page, 'join-modal')
     try {
@@ -154,6 +201,68 @@ test.describe('backend smoke @demo-smoke', () => {
             await waitMessagingReady(callerPage)
             await waitMessagingReady(calleePage)
             await expect(callerPage.getByTestId('callee-qr-modal')).toBeHidden()
+
+            await callerPage.getByTestId('shared-canvas-toggle-btn').click()
+            await expect(callerPage.getByTestId('shared-canvas-modal')).toBeVisible({
+                timeout: READY_TIMEOUT_MS,
+            })
+            await expect(calleePage.getByTestId('shared-canvas-modal')).toBeVisible({
+                timeout: READY_TIMEOUT_MS,
+            })
+
+            await drawCanvasStroke(
+                callerPage,
+                { nx: 0.28, ny: 0.32 },
+                { nx: 0.56, ny: 0.46 },
+            )
+            await expect
+                .poll(() => canvasHasInkNear(calleePage, 0.42, 0.4), {
+                    timeout: READY_TIMEOUT_MS,
+                })
+                .toBe(true)
+
+            await calleePage.getByTestId('shared-canvas-clear-btn').click()
+            await expect
+                .poll(() => canvasHasInkNear(calleePage, 0.42, 0.4), {
+                    timeout: READY_TIMEOUT_MS,
+                })
+                .toBe(false)
+            await expect
+                .poll(() => canvasHasInkNear(callerPage, 0.42, 0.4), {
+                    timeout: READY_TIMEOUT_MS,
+                })
+                .toBe(false)
+
+            await drawCanvasStroke(
+                calleePage,
+                { nx: 0.62, ny: 0.24 },
+                { nx: 0.34, ny: 0.58 },
+            )
+            await expect
+                .poll(() => canvasHasInkNear(callerPage, 0.48, 0.41), {
+                    timeout: READY_TIMEOUT_MS,
+                })
+                .toBe(true)
+
+            await callerPage.getByTestId('shared-canvas-clear-btn').click()
+            await expect
+                .poll(() => canvasHasInkNear(calleePage, 0.48, 0.41), {
+                    timeout: READY_TIMEOUT_MS,
+                })
+                .toBe(false)
+            await expect
+                .poll(() => canvasHasInkNear(callerPage, 0.48, 0.41), {
+                    timeout: READY_TIMEOUT_MS,
+                })
+                .toBe(false)
+
+            await calleePage.getByTestId('shared-canvas-modal-close').click()
+            await expect(calleePage.getByTestId('shared-canvas-modal')).toBeHidden({
+                timeout: READY_TIMEOUT_MS,
+            })
+            await expect(callerPage.getByTestId('shared-canvas-modal')).toBeHidden({
+                timeout: READY_TIMEOUT_MS,
+            })
 
             const fastMessage = `fast-${Date.now()}`
             await sendMessage(callerPage, 'fast', fastMessage)

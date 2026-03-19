@@ -242,6 +242,16 @@ body {
     color: var(--secondary-accent);
 }
 
+.sessionToolRow {
+    margin-top: 10px;
+    display: flex;
+    justify-content: flex-end;
+}
+
+.canvasToggleBtn {
+    min-width: 132px;
+}
+
 .qrModalBackdrop {
     position: fixed;
     inset: 0;
@@ -512,6 +522,47 @@ body {
     font-weight: 700;
 }
 
+.sharedCanvasModal {
+    width: min(920px, calc(100vw - 24px));
+    max-height: calc(100vh - 24px);
+    display: flex;
+    flex-direction: column;
+}
+
+.sharedCanvasHint {
+    margin: 0 0 8px;
+    font-size: 12px;
+    color: var(--text-3);
+}
+
+.sharedCanvasActions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+}
+
+.sharedCanvasClearBtn {
+    min-width: 120px;
+}
+
+.sharedCanvasWrap {
+    border: 1px solid var(--border-light);
+    background: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 0;
+}
+
+.sharedCanvasBoard {
+    display: block;
+    width: min(100%, 880px);
+    max-height: calc(100vh - 210px);
+    background: #ffffff;
+    cursor: crosshair;
+    touch-action: none;
+}
+
 .composer {
     display: grid;
     grid-template-columns: 1fr auto auto;
@@ -538,5 +589,13 @@ body {
 
     .composer {
         grid-template-columns: 1fr;
+    }
+
+    .sessionToolRow {
+        justify-content: stretch;
+    }
+
+    .canvasToggleBtn {
+        width: 100%;
     }
 }
