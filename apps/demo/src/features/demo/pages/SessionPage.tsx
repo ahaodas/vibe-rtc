@@ -1,4 +1,4 @@
-import { useVibeRTC } from '@vibe-rtc/rtc-react'
+import { type RoomInvite, useVibeRTCSession } from '@vibe-rtc/rtc-react'
 import { useCallback, useMemo, useReducer } from 'react'
 import { Navigate, useParams, useSearchParams } from 'react-router-dom'
 import { Credits } from '@/features/demo/components/Credits'
@@ -7,7 +7,6 @@ import { OperationLog } from '@/features/demo/components/OperationLog'
 import { SessionHeader } from '@/features/demo/components/session/SessionHeader'
 import { SessionOverlays } from '@/features/demo/components/session/SessionOverlays'
 import { useSessionActions } from '@/features/demo/hooks/useSessionActions'
-import { useSessionAttachment } from '@/features/demo/hooks/useSessionAttachment'
 import { useSessionConnectProgress } from '@/features/demo/hooks/useSessionConnectProgress'
 import { useSessionModalState } from '@/features/demo/hooks/useSessionModalState'
 import { useSessionNetworkWarning } from '@/features/demo/hooks/useSessionNetworkWarning'
@@ -35,11 +34,11 @@ import {
 import type {
     AttachRole,
     RouteStrategyMode,
-    SessionConnectOptions,
 } from '@/features/demo/model/types'
 
+const NOOP_PING_HANDLER = () => {}
+
 export function SessionPage() {
-    const rtc = useVibeRTC()
     const params = useParams<{ role: string; roomId: string }>()
     const [searchParams] = useSearchParams()
     const [state, dispatch] = useReducer(sessionReducer, sessionInitialState)
@@ -55,11 +54,24 @@ export function SessionPage() {
     const strategyMode: RouteStrategyMode = toRouteStrategyMode(
         searchParams.get(DEMO_ROUTE_QUERY_KEYS.strategy),
     )
-
-    const sessionOptions: SessionConnectOptions | undefined = useMemo(
-        () => (strategyMode === 'native' ? { connectionStrategy: 'BROWSER_NATIVE' } : undefined),
-        [strategyMode],
-    )
+    const inviteSessionId = (searchParams.get(DEMO_ROUTE_QUERY_KEYS.sessionId) ?? '').trim()
+    const invite = useMemo<RoomInvite | null>(() => {
+        if (!isRouteValid) return null
+        return {
+            roomId: routeRoomId,
+            sessionId: inviteSessionId || undefined,
+            connectionStrategy: strategyMode === 'native' ? 'BROWSER_NATIVE' : 'LAN_FIRST',
+        }
+    }, [inviteSessionId, isRouteValid, routeRoomId, strategyMode])
+    const rtc = useVibeRTCSession({
+        role: routeRole,
+        invite,
+        autoStart: isRouteValid,
+        autoCreate: false,
+        debug: true,
+        logMessages: true,
+        onPing: NOOP_PING_HANDLER,
+    })
 
     const setRoomNotFoundModalOpen = useCallback(
         (value: boolean) => dispatch(sessionActions.setRoomNotFoundModalOpen(value)),
@@ -101,16 +113,6 @@ export function SessionPage() {
         (value: typeof state.netWarning) => dispatch(sessionActions.setNetWarning(value)),
         [],
     )
-
-    useSessionAttachment({
-        isRouteValid,
-        role: routeRole,
-        roomId: routeRoomId,
-        strategyMode,
-        sessionOptions,
-        attachAsCaller: rtc.attachAsCaller,
-        attachAsCallee: rtc.attachAsCallee,
-    })
 
     useSessionSecurityEvents({
         isRouteValid,

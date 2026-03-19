@@ -7,6 +7,7 @@ export const DEMO_ROUTE_PATHS = {
 
 export const DEMO_ROUTE_QUERY_KEYS = {
     strategy: 'strategy',
+    sessionId: 'sessionId',
     role: 'role',
     as: 'as',
     roomId: 'roomId',

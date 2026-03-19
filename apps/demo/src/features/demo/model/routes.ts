@@ -6,12 +6,20 @@ export function toRouteStrategyMode(value: string | null | undefined): RouteStra
     return value === 'native' ? 'native' : 'default'
 }
 
-export function toSessionPath(role: AttachRole, roomId: string, strategyMode: RouteStrategyMode) {
+export function toSessionPath(
+    role: AttachRole,
+    roomId: string,
+    strategyMode: RouteStrategyMode,
+    sessionId?: string | null,
+) {
     const encodedRoomId = encodeURIComponent(roomId)
     const basePath = `${DEMO_ROUTE_PATHS.attach}/${role}/${encodedRoomId}`
-    return strategyMode === 'native'
-        ? `${basePath}?${DEMO_ROUTE_QUERY_KEYS.strategy}=native`
-        : basePath
+    const query = new URLSearchParams()
+    if (strategyMode === 'native') query.set(DEMO_ROUTE_QUERY_KEYS.strategy, 'native')
+    const normalizedSessionId = sessionId?.trim()
+    if (normalizedSessionId) query.set(DEMO_ROUTE_QUERY_KEYS.sessionId, normalizedSessionId)
+    const queryString = query.toString()
+    return queryString ? `${basePath}?${queryString}` : basePath
 }
 
 export function toBasePath(path: string) {

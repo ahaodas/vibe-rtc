@@ -24,6 +24,15 @@ describe('routes model', () => {
         )
     })
 
+    it('keeps optional sessionId in session route query', () => {
+        expect(toSessionPath('callee', 'room-1', 'default', 'session-1')).toBe(
+            `/attach/callee/room-1?${DEMO_ROUTE_QUERY_KEYS.sessionId}=session-1`,
+        )
+        expect(toSessionPath('callee', 'room-1', 'native', 'session-1')).toBe(
+            `/attach/callee/room-1?${DEMO_ROUTE_QUERY_KEYS.strategy}=native&${DEMO_ROUTE_QUERY_KEYS.sessionId}=session-1`,
+        )
+    })
+
     it('normalizes base path with and without a leading slash', () => {
         expect(toBasePath('attach')).toBe(`${APP_BASE_PATH}/attach`)
         expect(toBasePath('/attach')).toBe(`${APP_BASE_PATH}/attach`)

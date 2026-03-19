@@ -60,4 +60,11 @@ describe('AttachQueryRedirectPage', () => {
         expect(screen.getByTestId('session-room-id')).toHaveTextContent('room-1')
         expect(screen.getByTestId('session-search')).toHaveTextContent('?strategy=native')
     })
+
+    it('forwards optional sessionId to session route', () => {
+        renderAt('/attach?role=callee&roomId=room-2&sessionId=session-2')
+        expect(screen.getByTestId('session-role')).toHaveTextContent('callee')
+        expect(screen.getByTestId('session-room-id')).toHaveTextContent('room-2')
+        expect(screen.getByTestId('session-search')).toHaveTextContent('?sessionId=session-2')
+    })
 })

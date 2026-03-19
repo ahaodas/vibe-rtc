@@ -11,13 +11,15 @@ export function AttachQueryRedirectPage() {
         searchParams.get(DEMO_ROUTE_QUERY_KEYS.roomId) ??
         searchParams.get(DEMO_ROUTE_QUERY_KEYS.room)
     const strategyMode = toRouteStrategyMode(searchParams.get(DEMO_ROUTE_QUERY_KEYS.strategy))
+    const sessionIdRaw = searchParams.get(DEMO_ROUTE_QUERY_KEYS.sessionId)
 
     const role = roleRaw === 'caller' || roleRaw === 'callee' ? roleRaw : null
     const roomId = roomIdRaw?.trim() ?? ''
+    const sessionId = sessionIdRaw?.trim() ?? ''
 
     if (!role || !roomId) {
         return <Navigate to={DEMO_ROUTE_PATHS.home} replace />
     }
 
-    return <Navigate to={toSessionPath(role, roomId, strategyMode)} replace />
+    return <Navigate to={toSessionPath(role, roomId, strategyMode, sessionId)} replace />
 }

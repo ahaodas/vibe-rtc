@@ -1,5 +1,5 @@
-import { useVibeRTC } from '@vibe-rtc/rtc-react'
-import { useReducer } from 'react'
+import { useVibeRTCSession } from '@vibe-rtc/rtc-react'
+import { useEffect, useReducer, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Credits } from '@/features/demo/components/Credits'
 import {
@@ -11,17 +11,28 @@ import {
 } from '@/features/demo/model/constants'
 import { homeActions, homeInitialState, homeReducer } from '@/features/demo/model/homeReducer'
 import { toSessionPath } from '@/features/demo/model/routes'
-import type { SessionNavigationState } from '@/features/demo/model/sessionNavigation'
 import type { RouteStrategyMode } from '@/features/demo/model/types'
 import { AppButton } from '@/shared/ui/AppButton'
 import { AppInput } from '@/shared/ui/AppInput'
 import { AppModal } from '@/shared/ui/AppModal'
 import { SegmentedProgressBar } from '@/shared/ui/SegmentedProgressBar'
 
+const NOOP_PING_HANDLER = () => {}
+
 export function HomePage() {
-    const rtc = useVibeRTC()
     const navigate = useNavigate()
     const [state, dispatch] = useReducer(homeReducer, homeInitialState)
+    const createNavigationQueuedRef = useRef(false)
+    const rtc = useVibeRTCSession({
+        role: 'caller',
+        invite: null,
+        autoStart: state.createPending,
+        autoCreate: state.createPending,
+        connectionStrategy: state.createStrategy === 'native' ? 'BROWSER_NATIVE' : undefined,
+        debug: true,
+        logMessages: true,
+        onPing: NOOP_PING_HANDLER,
+    })
 
     const normalizedJoinRoomId = state.joinRoomIdInput.trim()
     const canJoinRoom = normalizedJoinRoomId.length > 0
@@ -29,11 +40,15 @@ export function HomePage() {
         Math.max(0, Math.min(1, state.createProgressRatio)) * 100,
     )
 
-    const createRoom = async (strategyMode: RouteStrategyMode) => {
+    const createRoom = (strategyMode: RouteStrategyMode) => {
+        if (state.createPending) return
         dispatch(homeActions.setCreatePending(true))
         dispatch(homeActions.setCreateStrategy(strategyMode))
         dispatch(homeActions.setCreateProgressRatio(0))
+    }
 
+    useEffect(() => {
+        if (!state.createPending) return
         const idleTimer = window.setInterval(() => {
             dispatch(
                 homeActions.tickCreateProgress(
@@ -42,28 +57,47 @@ export function HomePage() {
                 ),
             )
         }, CREATE_PROGRESS_IDLE_TICK_MS)
-
-        try {
-            const roomId =
-                strategyMode === 'native'
-                    ? await rtc.createChannel({ connectionStrategy: 'BROWSER_NATIVE' })
-                    : await rtc.createChannel()
-
-            dispatch(homeActions.setCreateProgressRatio(1))
-            await new Promise<void>((resolve) => {
-                window.setTimeout(resolve, CREATE_PROGRESS_FINISH_TICK_MS)
-            })
-
-            navigate(toSessionPath('caller', roomId, strategyMode), {
-                state: {
-                    alreadyAttached: true,
-                } satisfies SessionNavigationState,
-            })
-        } finally {
+        return () => {
             window.clearInterval(idleTimer)
-            dispatch(homeActions.resetCreateState())
         }
-    }
+    }, [state.createPending])
+
+    useEffect(() => {
+        if (!state.createPending) {
+            createNavigationQueuedRef.current = false
+            return
+        }
+        const roomId = rtc.invite?.roomId?.trim()
+        if (!roomId || createNavigationQueuedRef.current) return
+        createNavigationQueuedRef.current = true
+        const sessionId = rtc.invite?.sessionId?.trim()
+        dispatch(homeActions.setCreateProgressRatio(1))
+        const finishTimer = window.setTimeout(() => {
+            navigate(
+                toSessionPath(
+                    'caller',
+                    roomId,
+                    state.createStrategy,
+                    sessionId?.length ? sessionId : undefined,
+                ),
+            )
+        }, CREATE_PROGRESS_FINISH_TICK_MS)
+        return () => {
+            window.clearTimeout(finishTimer)
+        }
+    }, [
+        navigate,
+        rtc.invite?.roomId,
+        rtc.invite?.sessionId,
+        state.createPending,
+        state.createStrategy,
+    ])
+
+    useEffect(() => {
+        if (!state.createPending) return
+        if (!rtc.lastError) return
+        dispatch(homeActions.resetCreateState())
+    }, [state.createPending, rtc.lastError])
 
     const joinRoom = () => {
         if (!canJoinRoom) return
@@ -123,12 +157,8 @@ export function HomePage() {
                 </AppModal>
             ) : null}
 
-            {state.createPending && !rtc.booting ? (
-                <div
-                    className="appModalBackdrop"
-                    aria-live="polite"
-                    data-testid="create-room-overlay"
-                >
+            {state.createPending ? (
+                <div className="appModalBackdrop" aria-live="polite" data-testid="create-room-overlay">
                     <section className="appModal">
                         <h2 className="appModalTitle" data-testid="create-room-overlay-title">
                             Creating room...
@@ -179,7 +209,7 @@ export function HomePage() {
                     </p>
                 </section>
                 <AppButton
-                    onClick={() => void createRoom('default')}
+                    onClick={() => createRoom('default')}
                     disabled={state.createPending}
                     testId="create-room-default-btn"
                 >
@@ -188,7 +218,7 @@ export function HomePage() {
                         : 'Create Room'}
                 </AppButton>
                 <AppButton
-                    onClick={() => void createRoom('native')}
+                    onClick={() => createRoom('native')}
                     disabled={state.createPending}
                     testId="create-room-native-btn"
                 >

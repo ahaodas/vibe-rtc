@@ -4,16 +4,10 @@ import { toSessionPath } from '@/features/demo/model/routes'
 import { HomePage } from '@/features/demo/pages/HomePage'
 
 const mockNavigate = vi.fn()
-const mockCreateChannel = vi.fn()
-
-const mockRtc = {
-    createChannel: mockCreateChannel,
-    overallStatusText: '',
-    booting: false,
-}
+const mockUseVibeRTCSession = vi.fn()
 
 vi.mock('@vibe-rtc/rtc-react', () => ({
-    useVibeRTC: () => mockRtc,
+    useVibeRTCSession: (options: unknown) => mockUseVibeRTCSession(options),
 }))
 
 vi.mock('react-router-dom', async () => {
@@ -27,47 +21,88 @@ vi.mock('react-router-dom', async () => {
 describe('HomePage', () => {
     beforeEach(() => {
         vi.clearAllMocks()
-        mockRtc.booting = false
-        mockRtc.overallStatusText = ''
+        mockUseVibeRTCSession.mockImplementation((options: Record<string, unknown>) => {
+            const connectionStrategy =
+                options.connectionStrategy === 'BROWSER_NATIVE' ? 'BROWSER_NATIVE' : 'LAN_FIRST'
+            const invite =
+                options.autoCreate === true
+                    ? {
+                          roomId:
+                              connectionStrategy === 'BROWSER_NATIVE'
+                                  ? 'room-native'
+                                  : 'room-default',
+                          sessionId:
+                              connectionStrategy === 'BROWSER_NATIVE'
+                                  ? 'session-native'
+                                  : 'session-default',
+                          connectionStrategy,
+                      }
+                    : null
+
+            return {
+                invite,
+                joinUrl: null,
+                status: 'idle',
+                overallStatus: 'none',
+                overallStatusText: '',
+                lastError: undefined,
+                debugState: undefined,
+                operationLog: [],
+                clearOperationLog: vi.fn(),
+                start: vi.fn(),
+                stop: vi.fn(),
+                endRoom: vi.fn(),
+                sendFast: vi.fn(),
+                sendReliable: vi.fn(),
+                reconnectSoft: vi.fn(),
+                reconnectHard: vi.fn(),
+            }
+        })
     })
 
     it('creates default room and navigates to caller attach route', async () => {
-        mockCreateChannel.mockResolvedValueOnce('room-default')
         render(<HomePage />)
 
         fireEvent.click(screen.getByTestId('create-room-default-btn'))
 
         expect(screen.getByTestId('create-room-overlay')).toBeInTheDocument()
         await waitFor(() => {
-            expect(mockCreateChannel).toHaveBeenCalledWith()
+            expect(mockUseVibeRTCSession).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    role: 'caller',
+                    invite: null,
+                    autoStart: true,
+                    autoCreate: true,
+                    debug: true,
+                    logMessages: true,
+                    onPing: expect.any(Function),
+                }),
+            )
         })
         await waitFor(() => {
             expect(mockNavigate).toHaveBeenCalledWith(
-                toSessionPath('caller', 'room-default', 'default'),
-                {
-                    state: { alreadyAttached: true },
-                },
+                toSessionPath('caller', 'room-default', 'default', 'session-default'),
             )
         })
     })
 
     it('creates native room and navigates with native strategy query', async () => {
-        mockCreateChannel.mockResolvedValueOnce('room-native')
         render(<HomePage />)
 
         fireEvent.click(screen.getByTestId('create-room-native-btn'))
 
         await waitFor(() => {
-            expect(mockCreateChannel).toHaveBeenCalledWith({
-                connectionStrategy: 'BROWSER_NATIVE',
-            })
+            expect(mockUseVibeRTCSession).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    connectionStrategy: 'BROWSER_NATIVE',
+                    autoStart: true,
+                    autoCreate: true,
+                }),
+            )
         })
         await waitFor(() => {
             expect(mockNavigate).toHaveBeenCalledWith(
-                toSessionPath('caller', 'room-native', 'native'),
-                {
-                    state: { alreadyAttached: true },
-                },
+                toSessionPath('caller', 'room-native', 'native', 'session-native'),
             )
         })
     })

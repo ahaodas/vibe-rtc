@@ -1,10 +1,10 @@
-import type { VibeRTCContextValue } from '@vibe-rtc/rtc-react'
+import type { InviteDrivenVibeRTCResult } from '@vibe-rtc/rtc-react'
 import { useEffect, useRef } from 'react'
 import { traceDemo } from '@/features/demo/model/trace'
 import type { AttachRole } from '@/features/demo/model/types'
 
 type UseSessionTracingArgs = {
-    rtc: VibeRTCContextValue
+    rtc: InviteDrivenVibeRTCResult
     role: AttachRole
     roomId: string
 }

@@ -1,4 +1,4 @@
-import type { VibeRTCContextValue } from '@vibe-rtc/rtc-react'
+import type { InviteDrivenVibeRTCResult } from '@vibe-rtc/rtc-react'
 import { useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { DEMO_ROUTE_PATHS } from '@/features/demo/model/routePaths'
@@ -8,7 +8,7 @@ import type { AttachRole } from '@/features/demo/model/types'
 type Dispatch = (action: SessionAction) => void
 
 type UseSessionActionsArgs = {
-    rtc: VibeRTCContextValue
+    rtc: InviteDrivenVibeRTCResult
     dispatch: Dispatch
     role: AttachRole
     leavePending: boolean
@@ -28,7 +28,7 @@ export function useSessionActions({
 
     const backToMain = useCallback(() => {
         dispatch(sessionActions.resetForMain())
-        void rtc.disconnect().catch(() => {})
+        void rtc.stop().catch(() => {})
         navigate(DEMO_ROUTE_PATHS.home)
     }, [dispatch, navigate, rtc])
 
@@ -39,7 +39,7 @@ export function useSessionActions({
 
         try {
             if (role === 'caller' && removeRoomOnLeave) await rtc.endRoom()
-            else await rtc.disconnect()
+            else await rtc.stop()
         } catch {
             // noop
         }

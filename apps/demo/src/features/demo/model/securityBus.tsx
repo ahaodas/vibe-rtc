@@ -12,6 +12,7 @@ type RoomOccupiedPayload = {
 
 type TakenOverPayload = {
     roomId: string
+    role?: 'caller' | 'callee'
     bySessionId?: string
 }
 

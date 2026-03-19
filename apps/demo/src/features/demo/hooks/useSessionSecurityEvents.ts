@@ -53,6 +53,7 @@ export function useSessionSecurityEvents({
         handledTakenOverIdRef.current = event.id
 
         if (event.payload.roomId !== roomId) return
+        if (event.payload.role && event.payload.role !== role) return
 
         traceDemo('security:taken_over:accepted', {
             detail: event.payload,
