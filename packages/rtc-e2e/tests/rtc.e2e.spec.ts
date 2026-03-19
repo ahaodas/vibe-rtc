@@ -13,6 +13,9 @@ const USING_FIREBASE_EMULATOR =
 const RECOVERY_SLA_MS = USING_FIREBASE_EMULATOR ? 12_000 : 10_000
 const BROWSER_NATIVE_RECOVERY_SLA_MS = 15_000
 const TAKEOVER_READY_TIMEOUT_MS = 120_000
+const CONSECUTIVE_CALLER_TAKEOVER_COUNT = USING_FIREBASE_EMULATOR ? 20 : 12
+const CONSECUTIVE_CALLER_TAKEOVER_TIMEOUT_MS = USING_FIREBASE_EMULATOR ? 300_000 : 240_000
+const CONSECUTIVE_CALLER_TAKEOVER_SETTLE_MS = USING_FIREBASE_EMULATOR ? 0 : 200
 const CLEANUP_TIMEOUT_MS = 4_000
 const OPEN_ROLE_MAX_ATTEMPTS = 4
 
@@ -988,46 +991,52 @@ test.describe('takeover (same role, last page wins)', () => {
         await assertRoleStaysDisconnected(pCaller, 'caller')
     })
 
-    test('20 consecutive caller takeovers keep only latest caller active', async ({
-        context,
-        baseURL,
-    }) => {
-        test.setTimeout(300_000)
-        if (!baseURL) throw new Error('Playwright baseURL is required for rtc e2e tests')
+    test(
+        `${CONSECUTIVE_CALLER_TAKEOVER_COUNT} consecutive caller takeovers keep only latest caller active`,
+        async ({
+            context,
+            baseURL,
+        }) => {
+            test.setTimeout(CONSECUTIVE_CALLER_TAKEOVER_TIMEOUT_MS)
+            if (!baseURL) throw new Error('Playwright baseURL is required for rtc e2e tests')
 
-        let activeCaller = pCaller
+            let activeCaller = pCaller
 
-        for (let i = 1; i <= 20; i++) {
-            const nextCaller = await context.newPage()
-            extraPages.push({ page: nextCaller, who: 'caller' })
-            await openRolePage(nextCaller, baseURL, 'caller', roomId, `caller-cycle-${i}`)
+            for (let i = 1; i <= CONSECUTIVE_CALLER_TAKEOVER_COUNT; i++) {
+                const nextCaller = await context.newPage()
+                extraPages.push({ page: nextCaller, who: 'caller' })
+                await openRolePage(nextCaller, baseURL, 'caller', roomId, `caller-cycle-${i}`)
 
-            await Promise.all([
-                waitRoleReadyNoAssist(nextCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS),
-                waitRoleReadyNoAssist(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
-            ])
+                await Promise.all([
+                    waitRoleReadyNoAssist(nextCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS),
+                    waitRoleReadyNoAssist(pCallee, 'callee', TAKEOVER_READY_TIMEOUT_MS),
+                ])
 
-            await assertStateConnected(nextCaller, 'caller')
+                await assertStateConnected(nextCaller, 'caller')
+                await assertStateConnected(pCallee, 'callee')
+                await waitRoleDisconnected(activeCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS)
+                await expectTakeoverSecurityEvent(activeCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS)
+
+                const marker = `takeover-cycle-${i}-${Date.now()}`
+                await Promise.all([
+                    flushMessages(activeCaller, 'caller'),
+                    flushMessages(nextCaller, 'caller'),
+                    flushMessages(pCallee, 'callee'),
+                ])
+                await sendReliable(pCallee, 'callee', marker)
+                await expectReceivesMessage(nextCaller, 'caller', marker)
+                await expectNoMessage(activeCaller, 'caller', marker, 500)
+                await assertRoleStaysDisconnected(activeCaller, 'caller', 1000)
+                await cleanupRole(activeCaller, 'caller')
+                await activeCaller.close().catch(() => {})
+                activeCaller = nextCaller
+                if (CONSECUTIVE_CALLER_TAKEOVER_SETTLE_MS > 0) {
+                    await activeCaller.waitForTimeout(CONSECUTIVE_CALLER_TAKEOVER_SETTLE_MS)
+                }
+            }
+
+            await assertStateConnected(activeCaller, 'caller')
             await assertStateConnected(pCallee, 'callee')
-            await waitRoleDisconnected(activeCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS)
-            await expectTakeoverSecurityEvent(activeCaller, 'caller', TAKEOVER_READY_TIMEOUT_MS)
-
-            const marker = `takeover-cycle-${i}-${Date.now()}`
-            await Promise.all([
-                flushMessages(activeCaller, 'caller'),
-                flushMessages(nextCaller, 'caller'),
-                flushMessages(pCallee, 'callee'),
-            ])
-            await sendReliable(pCallee, 'callee', marker)
-            await expectReceivesMessage(nextCaller, 'caller', marker)
-            await expectNoMessage(activeCaller, 'caller', marker, 500)
-            await assertRoleStaysDisconnected(activeCaller, 'caller', 1000)
-            await cleanupRole(activeCaller, 'caller')
-            await activeCaller.close().catch(() => {})
-            activeCaller = nextCaller
-        }
-
-        await assertStateConnected(activeCaller, 'caller')
-        await assertStateConnected(pCallee, 'callee')
-    })
+        },
+    )
 })

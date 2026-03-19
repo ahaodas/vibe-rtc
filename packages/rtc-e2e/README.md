@@ -17,6 +17,8 @@ This package is internal and not published.
 - cross-context takeover (different auth uid) via attach hash
 - stress scenario: `20` consecutive caller takeovers with latest-owner checks
 - takeover security callbacks (`onTakenOver`) and stale-tab disconnect assertions
+- invite-driven `@vibe-rtc/rtc-react` hook DX (`useVibeRTCSession`) flows:
+  caller auto-create, callee restore by invite, hash-based attach, takeover
 
 ## Run Tests
 
@@ -88,6 +90,10 @@ Attach-link flow is supported for takeover tests:
 - hash format: `#/attach/{caller|callee}/{roomId}?strategy=native`
 - `window.app.attachFromHash()` parses hash and joins role/room directly
 - core/adapter receive normal role/room arguments (URL is only harness layer)
+
+Hook harness flow is exposed on `/e2e-hook.html` via `window.hookApp`
+and is used by `tests/rtc-hook.e2e.spec.ts`.
+Hook invite payload supports optional `sessionId` (shared invite may include only `roomId` + `connectionStrategy`).
 
 ## Notes
 

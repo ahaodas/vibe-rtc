@@ -16,6 +16,13 @@ export default defineConfig({
     resolve: {
         alias: {
             '@': fileURLToPath(new URL('./src', import.meta.url)),
+            '@vibe-rtc/rtc-core': fileURLToPath(new URL('../rtc-core/src/index.ts', import.meta.url)),
+            '@vibe-rtc/rtc-firebase': fileURLToPath(
+                new URL('../rtc-firebase/src/index.ts', import.meta.url),
+            ),
+            '@vibe-rtc/rtc-react': fileURLToPath(
+                new URL('../rtc-react/src/index.ts', import.meta.url),
+            ),
         },
     },
 })
