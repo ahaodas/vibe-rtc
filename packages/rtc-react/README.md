@@ -3,7 +3,11 @@
 
 React integration for `@vibe-rtc/rtc-core`.
 
-Provides `VibeRTCProvider` and `useVibeRTC()` for room/channel lifecycle, messaging, reconnect, and typed state for UI.
+Provides:
+
+- `VibeRTCProvider` for signaling bootstrap
+- `useVibeRTCSession(options)` as the invite-driven reactive hook (primary DX)
+- `useVibeRTC()` legacy context API (still available)
 
 ## Install
 
@@ -33,47 +37,72 @@ import { VibeRTCProvider } from '@vibe-rtc/rtc-react'
 Available modes: `LAN_FIRST`, `DEFAULT`, `BROWSER_NATIVE`.
 You can set strategy globally on provider, or override it per `create/join/attach` call.
 
-## Hook API
+## Invite-Driven Hook API
 
 ```ts
-const rtc = useVibeRTC()
+import { useVibeRTCSession } from '@vibe-rtc/rtc-react'
 
-await rtc.createChannel()          // caller flow
-await rtc.joinChannel(roomId)      // callee flow
-await rtc.createChannel({ connectionStrategy: 'BROWSER_NATIVE' })
-await rtc.joinChannel(roomId, { connectionStrategy: 'DEFAULT' })
-await rtc.attachAsCaller(roomId)
-await rtc.attachAsCallee(roomId)
-await rtc.attachAuto(roomId, {
-  allowTakeOver: true,
-  staleMs: 60_000,
-  connectionStrategy: 'BROWSER_NATIVE',
+type RoomInvite = {
+  roomId: string
+  sessionId?: string // optional; shared invite can omit it
+  connectionStrategy: ConnectionStrategy
+}
+
+const rtc = useVibeRTCSession({
+  role: 'callee',
+  invite, // RoomInvite | null
+  autoStart: true,   // default true
+  autoCreate: false, // default false
+  debug: true,       // opt-in rich debug
+  logMessages: true, // opt-in operation log verbosity
 })
-
-await rtc.sendFast('ping')
-await rtc.sendReliable('pong')
-
-await rtc.reconnectSoft()
-await rtc.reconnectHard({ awaitReadyMs: 15000 })
-
-await rtc.disconnect()
-await rtc.endRoom()
 ```
 
-## State Model
+`useVibeRTCSession(options)` returns:
 
-`useVibeRTC()` returns:
+- `invite: RoomInvite | null`
+- `joinUrl: string | null`
+- `status: idle | connecting | connected | disconnected | error`
+- `overallStatus: none | connecting | connected | error`
+- `overallStatusText: string`
+- `lastError`
+- `debugState` (only when debug/log mode is enabled)
+- `operationLog` + `clearOperationLog()`
+- `start()` / `stop()` for imperative control when `autoStart=false`
+- `endRoom()` for caller-side room removal
+- `sendFast()`, `sendReliable()`, `reconnectSoft()`, `reconnectHard()`
 
-- `status`: `idle | booting | connecting | connected | disconnected | error`
-- `overallStatus`: `none | connecting | connected | error` (aggregated signaling + WebRTC state)
-- `overallStatusText`: current high-level operation description
-- `operationLog`: chronological operation feed (`signaling | webrtc | data | system | error`)
-- `clearOperationLog()`: clears operation feed
-- `booting`, `bootError`, `lastError`
-- `roomId`
-- `lastFastMessage`, `lastReliableMessage`
-- `messageSeqFast`, `messageSeqReliable`
-- `debugState` (from core signaler)
+Behavior:
+
+- If `options.invite` is present, hook restores/continues that session.
+- Invite `sessionId` is optional; the hook can resolve/fill effective role session internally.
+- If `invite` is absent and `role='caller'` with `autoCreate=true`, hook creates a new room.
+- If `invite` is absent and `role='callee'`, hook stays idle/waiting.
+- Hook reacts to semantic option changes (`invite`, `role`, `autoStart`, `autoCreate`, `debug`, `logMessages`, presence of `onPing`) without unnecessary restarts on object identity-only rerenders.
+- Invite persistence is external: read/write invite in URL/storage/router outside the hook and pass it through `options.invite`.
+
+## Example: Durable Reconnect
+
+```tsx
+const [invite, setInvite] = useState<RoomInvite | null>(() => readInviteFromUrlOrStorage())
+
+const rtc = useVibeRTCSession({
+  role,
+  invite,
+  autoStart: true,
+  autoCreate: role === 'caller',
+})
+
+useEffect(() => {
+  if (!rtc.invite) return
+  setInvite(rtc.invite)
+  writeInviteToUrlOrStorage(rtc.invite)
+}, [rtc.invite])
+```
+
+## Legacy Hook (Secondary)
+
+`useVibeRTC()` is unchanged and still exposes the original imperative lifecycle/context API (`createChannel`, `joinChannel`, `attachAsCaller`, ...). Prefer `useVibeRTCSession(options)` for new integrations focused on durable invite-driven reconnect.
 
 ## Takeover Behavior
 

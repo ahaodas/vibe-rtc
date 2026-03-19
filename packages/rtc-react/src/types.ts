@@ -1,4 +1,10 @@
-import type { ConnectionStrategy, DebugState, RTCSignaler, SignalDB } from '@vibe-rtc/rtc-core'
+import type {
+    ConnectionStrategy,
+    DebugState,
+    PingSnapshot,
+    RTCSignaler,
+    SignalDB,
+} from '@vibe-rtc/rtc-core'
 import type React from 'react'
 
 export type VibeRTCStatus =
@@ -101,4 +107,55 @@ export interface VibeRTCProviderProps {
     renderBootError?: (err: VibeRTCError) => React.ReactNode
     /** Children */
     children: React.ReactNode
+}
+
+export type ConnectionStatus = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error'
+
+export type RoomInvite = {
+    roomId: string
+    sessionId?: string
+    connectionStrategy: ConnectionStrategy
+}
+
+export interface UseVibeRTCOptions {
+    role: 'caller' | 'callee'
+    invite?: RoomInvite | null
+    connectionStrategy?: ConnectionStrategy
+    autoStart?: boolean
+    autoCreate?: boolean
+    debug?: boolean
+    logMessages?: boolean
+    onPing?: (snapshot: PingSnapshot) => void
+    onFastMessage?: (message: string) => void
+    onReliableMessage?: (message: string) => void
+    onError?: (error: VibeRTCError) => void
+}
+
+export interface InviteDrivenVibeRTCResult {
+    invite: RoomInvite | null
+    joinUrl: string | null
+    status: ConnectionStatus
+    overallStatus: VibeRTCOverallStatus
+    overallStatusText: string
+    lastError?: VibeRTCError
+    debugState?: DebugState
+    operationLog: VibeRTCOperationLogEntry[]
+    clearOperationLog: () => void
+    start: () => Promise<void>
+    stop: () => Promise<void>
+    endRoom: () => Promise<void>
+    sendFast: (text: string) => Promise<void>
+    sendReliable: (text: string) => Promise<void>
+    reconnectSoft: () => Promise<void>
+    reconnectHard: (opts?: { awaitReadyMs?: number }) => Promise<void>
+}
+
+export interface VibeRTCRuntimeContextValue {
+    getSignalDB: () => Promise<SignalDB>
+    rtcConfiguration?: RTCConfiguration
+    connectionStrategy?: ConnectionStrategy
+    lanFirstTimeoutMs?: number
+    pingIntervalMs?: number
+    pingWindowSize?: number
+    netRttIntervalMs?: number
 }

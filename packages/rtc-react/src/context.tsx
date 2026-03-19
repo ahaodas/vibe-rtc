@@ -23,11 +23,13 @@ import type {
     VibeRTCOperationScope,
     VibeRTCOverallStatus,
     VibeRTCProviderProps,
+    VibeRTCRuntimeContextValue,
     VibeRTCSessionOptions,
     VibeRTCState,
 } from './types'
 
 const Ctx = createContext<VibeRTCContextValue | null>(null)
+const RuntimeCtx = createContext<VibeRTCRuntimeContextValue | null>(null)
 const MAX_OPERATION_LOG_SIZE = 200
 
 function toOverallStatus(state: VibeRTCState): VibeRTCOverallStatus {
@@ -819,16 +821,39 @@ export function VibeRTCProvider(props: PropsWithChildren<VibeRTCProviderProps>) 
         ],
     )
 
+    const runtimeValue: VibeRTCRuntimeContextValue = useMemo(
+        () => ({
+            getSignalDB,
+            rtcConfiguration,
+            connectionStrategy,
+            lanFirstTimeoutMs,
+            pingIntervalMs,
+            pingWindowSize,
+            netRttIntervalMs,
+        }),
+        [
+            getSignalDB,
+            rtcConfiguration,
+            connectionStrategy,
+            lanFirstTimeoutMs,
+            pingIntervalMs,
+            pingWindowSize,
+            netRttIntervalMs,
+        ],
+    )
+
     if (state.booting) {
         // Keep children mounted to avoid UI flicker during lazy signaling bootstrap.
     }
 
     return (
-        <Ctx.Provider value={value}>
-            {state.booting && renderLoading}
-            {state.bootError && renderBootError?.(state.bootError)}
-            {children}
-        </Ctx.Provider>
+        <RuntimeCtx.Provider value={runtimeValue}>
+            <Ctx.Provider value={value}>
+                {state.booting && renderLoading}
+                {state.bootError && renderBootError?.(state.bootError)}
+                {children}
+            </Ctx.Provider>
+        </RuntimeCtx.Provider>
     )
 }
 
@@ -836,4 +861,12 @@ export function useVibeRTC() {
     const ctx = useContext(Ctx)
     if (!ctx) throw new Error('VibeRTCProvider missing')
     return ctx
+}
+
+export function useVibeRTCContextOptional() {
+    return useContext(Ctx)
+}
+
+export function useVibeRTCRuntimeContextOptional() {
+    return useContext(RuntimeCtx)
 }
