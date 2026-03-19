@@ -126,7 +126,7 @@ export function SessionPage() {
         invite,
         autoStart: isRouteValid,
         autoCreate: false,
-        debug: true,
+        debug: import.meta.env.DEV,
         logMessages: true,
         onPing: NOOP_PING_HANDLER,
         onTakenOver: handleTakenOver,

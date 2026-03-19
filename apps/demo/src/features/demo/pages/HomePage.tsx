@@ -29,7 +29,7 @@ export function HomePage() {
         autoStart: state.createPending,
         autoCreate: state.createPending,
         connectionStrategy: state.createStrategy === 'native' ? 'BROWSER_NATIVE' : undefined,
-        debug: true,
+        debug: import.meta.env.DEV,
         logMessages: true,
         onPing: NOOP_PING_HANDLER,
     })

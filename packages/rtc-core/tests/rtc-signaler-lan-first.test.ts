@@ -153,6 +153,12 @@ function stubRtcSessionDescription() {
     )
 }
 
+const flushMicrotasks = async (count = 6) => {
+    for (let index = 0; index < count; index += 1) {
+        await Promise.resolve()
+    }
+}
+
 describe('RTCSignaler LAN_FIRST strategy', () => {
     it('rebuilds RTCPeerConnection with STUN after LAN timeout', async () => {
         vi.useFakeTimers()
@@ -562,9 +568,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
             sdp: 'v=0\r\no=caller 3 3 IN IP4 0.0.0.0\r\n',
             sessionId: 'sess-a',
         })
-        await Promise.resolve()
-        await Promise.resolve()
-        await Promise.resolve()
+        await flushMicrotasks()
 
         expect(FakeRTCPeerConnection.instances.length).toBe(2)
         offerCb?.({
@@ -572,9 +576,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
             sdp: 'v=0\r\no=caller 4 4 IN IP4 0.0.0.0\r\n',
             sessionId: 'sess-b',
         })
-        await Promise.resolve()
-        await Promise.resolve()
-        await Promise.resolve()
+        await flushMicrotasks()
         expect(FakeRTCPeerConnection.instances.length).toBe(3)
     })
 
@@ -613,9 +615,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
             sdp: 'v=0\r\no=caller 1 1 IN IP4 0.0.0.0\r\n',
             sessionId: 'sess-a',
         })
-        await Promise.resolve()
-        await Promise.resolve()
-        await Promise.resolve()
+        await flushMicrotasks()
         expect(FakeRTCPeerConnection.instances.length).toBe(2)
 
         offerCb?.({
@@ -623,9 +623,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
             sdp: 'v=0\r\no=caller 2 2 IN IP4 0.0.0.0\r\n',
             sessionId: 'sess-b',
         })
-        await Promise.resolve()
-        await Promise.resolve()
-        await Promise.resolve()
+        await flushMicrotasks()
         expect(FakeRTCPeerConnection.instances.length).toBe(3)
 
         offerCb?.({
@@ -710,9 +708,7 @@ describe('RTCSignaler LAN_FIRST strategy', () => {
             sdp: 'v=0\r\no=caller 10 10 IN IP4 0.0.0.0\r\n',
             sessionId: 'caller-session-active',
         })
-        await Promise.resolve()
-        await Promise.resolve()
-        await Promise.resolve()
+        await flushMicrotasks()
 
         expect(FakeRTCPeerConnection.instances.length).toBe(1)
         expect(addIceSpy).toHaveBeenCalledTimes(1)

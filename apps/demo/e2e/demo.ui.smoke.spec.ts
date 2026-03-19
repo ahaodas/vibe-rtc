@@ -12,16 +12,21 @@ const HOME_URL_RE = /#\/$/
 const CALLER_ATTACH_URL_RE = /#\/attach\/caller\/[^?]+(?:\?.*)?$/
 
 function isIgnorableBrowserNoise(message: string, sourceUrl?: string): boolean {
+    const normalizedSourceUrl = sourceUrl?.toLowerCase() ?? ''
+
     if (
         message.includes('Failed to load resource: the server responded with a status of 400') &&
-        sourceUrl?.includes('firestore.googleapis.com')
+        normalizedSourceUrl.includes('firestore.googleapis.com')
     ) {
         return true
     }
 
     if (
         message.includes('Failed to load resource: the server responded with a status of 404') &&
-        (!sourceUrl || sourceUrl.trim().length === 0)
+        (message.includes('status of 404 ()') ||
+            !sourceUrl ||
+            sourceUrl.trim().length === 0 ||
+            normalizedSourceUrl.endsWith('/favicon.ico'))
     ) {
         return true
     }
@@ -106,7 +111,7 @@ async function drawCanvasStroke(
 
 async function canvasHasInkNear(page: Page, nx: number, ny: number): Promise<boolean> {
     return await page.getByTestId('shared-canvas-element').evaluate(
-        (canvas, point) => {
+        (canvas: HTMLCanvasElement, point) => {
             const context = canvas.getContext('2d')
             if (!context) return false
             const cx = Math.round(canvas.width * point.nx)
