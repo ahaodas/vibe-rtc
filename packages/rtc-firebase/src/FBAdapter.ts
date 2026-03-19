@@ -115,7 +115,7 @@ export interface FBAdapterStorage {
 export interface FBAdapterCallbacks {
     onShareLink?(payload: { roomId: string; url: string }): void
     onRoomOccupied?(payload: { roomId: string }): void
-    onTakenOver?(payload: { roomId: string; bySessionId?: string }): void
+    onTakenOver?(payload: { roomId: string; role?: Role; bySessionId?: string }): void
     onSecurityError?(err: unknown): void
 }
 
@@ -433,7 +433,7 @@ export class FBAdapter implements SignalDB {
         this.rejectCandidateBuffer(role, `${role} session was taken over`)
         const roomId = this.roomRef?.id
         if (!roomId) return
-        this.callbacks.onTakenOver?.({ roomId, bySessionId })
+        this.callbacks.onTakenOver?.({ roomId, role, bySessionId })
     }
 
     private assertWritable(role: Role) {
@@ -1153,6 +1153,15 @@ export class FBAdapter implements SignalDB {
 
         const sessionId = this.roleSessionByRole[role]
         if (!sessionId) return
+        const wasActiveRole = this.activeRole === role
+
+        // Stop takeover observers before mutating lease ownership to avoid
+        // self-generated takeover events during normal local leave flow.
+        if (wasActiveRole) {
+            this.activeRole = null
+            this.stopTakeoverWatch()
+        }
+        this.takeoverDetectedByRole[role] = false
 
         try {
             const leaseRef = this.leaseRef(role)
@@ -1180,10 +1189,6 @@ export class FBAdapter implements SignalDB {
 
         this.roleSessionByRole[role] = null
         this.takeoverDetectedByRole[role] = false
-        if (this.activeRole === role) {
-            this.activeRole = null
-            this.stopTakeoverWatch()
-        }
     }
 
     // ---------------- SDP ----------------
