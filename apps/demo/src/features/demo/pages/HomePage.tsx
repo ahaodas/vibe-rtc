@@ -158,7 +158,11 @@ export function HomePage() {
             ) : null}
 
             {state.createPending ? (
-                <div className="appModalBackdrop" aria-live="polite" data-testid="create-room-overlay">
+                <div
+                    className="appModalBackdrop"
+                    aria-live="polite"
+                    data-testid="create-room-overlay"
+                >
                     <section className="appModal">
                         <h2 className="appModalTitle" data-testid="create-room-overlay-title">
                             Creating room...

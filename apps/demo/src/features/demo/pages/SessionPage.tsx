@@ -31,10 +31,7 @@ import {
     sessionInitialState,
     sessionReducer,
 } from '@/features/demo/model/sessionReducer'
-import type {
-    AttachRole,
-    RouteStrategyMode,
-} from '@/features/demo/model/types'
+import type { AttachRole, RouteStrategyMode } from '@/features/demo/model/types'
 
 const NOOP_PING_HANDLER = () => {}
 

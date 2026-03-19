@@ -71,21 +71,15 @@ async function joinWithInvite(page: Page, invite: RoomInvite, role: Role) {
 }
 
 async function waitReady(page: Page, timeoutMs = READY_TIMEOUT_MS) {
-    await page.evaluate(
-        async (timeout) => {
-            await (window as unknown as HookWindow).hookApp.waitReadyNoAssist(timeout)
-        },
-        timeoutMs,
-    )
+    await page.evaluate(async (timeout) => {
+        await (window as unknown as HookWindow).hookApp.waitReadyNoAssist(timeout)
+    }, timeoutMs)
 }
 
 async function sendReliable(page: Page, text: string) {
-    await page.evaluate(
-        async (payload) => {
-            await (window as unknown as HookWindow).hookApp.sendReliable(payload)
-        },
-        text,
-    )
+    await page.evaluate(async (payload) => {
+        await (window as unknown as HookWindow).hookApp.sendReliable(payload)
+    }, text)
 }
 
 async function getState(page: Page): Promise<HookState> {

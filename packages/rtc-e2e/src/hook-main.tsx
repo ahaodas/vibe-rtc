@@ -206,7 +206,8 @@ function HookHarnessSession(props: { securityEventsRef: MutableRefObject<string[
             },
             joinWithInvite: async (invite, role = 'callee') => {
                 const normalizedInvite = normalizeInvite(invite)
-                if (!normalizedInvite) throw new Error('[rtc-e2e-hook] joinWithInvite: invalid invite')
+                if (!normalizedInvite)
+                    throw new Error('[rtc-e2e-hook] joinWithInvite: invalid invite')
                 applyOptions({
                     role,
                     invite: normalizedInvite,
