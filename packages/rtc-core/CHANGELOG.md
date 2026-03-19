@@ -1,5 +1,17 @@
 # @vibe-rtc/rtc-core
 
+## [0.4.0](https://github.com/ahaodas/vibe-rtc/compare/rtc-core-v0.3.7...rtc-core-v0.4.0) (2026-03-19)
+
+
+### Features
+
+* **rtc-react:** add onTakenOver callback and migrate demo ([f9bacc5](https://github.com/ahaodas/vibe-rtc/commit/f9bacc5d9185ae203148e0156d1a0869895ee830))
+
+
+### Bug Fixes
+
+* **rtc-core:** disable ping traffic when interval is non-positive ([0fcfe34](https://github.com/ahaodas/vibe-rtc/commit/0fcfe34a065edefbdb895da951b78c45d2e6b3b5))
+
 ## [0.3.7](https://github.com/ahaodas/vibe-rtc/compare/rtc-core-v0.3.6...rtc-core-v0.3.7) (2026-03-18)
 
 

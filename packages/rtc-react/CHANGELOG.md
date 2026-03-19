@@ -1,5 +1,20 @@
 # @vibe-rtc/rtc-react
 
+## [0.4.0](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.9...rtc-react-v0.4.0) (2026-03-19)
+
+
+### Features
+
+* **rtc-react:** add invite-driven useVibeRTCSession hook ([471731d](https://github.com/ahaodas/vibe-rtc/commit/471731d50b4c6c362cf1c35a170e9d19b9cb1a27))
+* **rtc-react:** add onTakenOver callback and migrate demo ([f9bacc5](https://github.com/ahaodas/vibe-rtc/commit/f9bacc5d9185ae203148e0156d1a0869895ee830))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @vibe-rtc/rtc-core bumped to 0.4.0
+
 ## [0.3.9](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.8...rtc-react-v0.3.9) (2026-03-18)
 
 
