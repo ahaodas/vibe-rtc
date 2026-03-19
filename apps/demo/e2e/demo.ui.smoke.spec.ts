@@ -8,12 +8,20 @@ const HAS_SIGNALING_ENV =
     hasValue(process.env.VITE_FIREBASE_PROJECT_ID ?? DEMO_ENV.VITE_FIREBASE_PROJECT_ID) &&
     hasValue(process.env.VITE_FIREBASE_API_KEY ?? DEMO_ENV.VITE_FIREBASE_API_KEY) &&
     hasValue(process.env.VITE_FIREBASE_APP_ID ?? DEMO_ENV.VITE_FIREBASE_APP_ID)
+const HOME_URL_RE = /#\/$/
 const CALLER_ATTACH_URL_RE = /#\/attach\/caller\/[^?]+(?:\?.*)?$/
 
 function isIgnorableBrowserNoise(message: string, sourceUrl?: string): boolean {
     if (
         message.includes('Failed to load resource: the server responded with a status of 400') &&
         sourceUrl?.includes('firestore.googleapis.com')
+    ) {
+        return true
+    }
+
+    if (
+        message.includes('Failed to load resource: the server responded with a status of 404') &&
+        (!sourceUrl || sourceUrl.trim().length === 0)
     ) {
         return true
     }
@@ -172,6 +180,27 @@ test.describe('backend smoke @demo-smoke', () => {
             await expect(page.getByTestId('session-page')).toBeVisible()
             const roomId = extractCallerRoomId(page.url())
             expect(roomId.length).toBeGreaterThan(0)
+        } finally {
+            assertNoUnexpectedErrors()
+        }
+    })
+
+    test('home create room can be canceled from initialization modal', async ({ page }) => {
+        const assertNoUnexpectedErrors = collectUnexpectedBrowserErrors(page, 'create-room-cancel')
+        try {
+            await openHome(page)
+            await page.getByTestId('create-room-default-btn').click()
+            await expect(page.getByTestId('create-room-overlay')).toBeVisible()
+
+            await page.getByTestId('create-room-cancel-btn').click()
+
+            await expect(page).toHaveURL(HOME_URL_RE)
+            await expect(page.getByTestId('home-page')).toBeVisible()
+            await expect(page.getByTestId('create-room-overlay')).toBeHidden()
+
+            await page.waitForTimeout(3_000)
+            await expect(page).toHaveURL(HOME_URL_RE)
+            await expect(page).not.toHaveURL(CALLER_ATTACH_URL_RE)
         } finally {
             assertNoUnexpectedErrors()
         }

@@ -6,6 +6,28 @@ import { HomePage } from '@/features/demo/pages/HomePage'
 const mockNavigate = vi.fn()
 const mockUseVibeRTCSession = vi.fn()
 
+function makeRtcMock(overrides: Record<string, unknown> = {}) {
+    return {
+        invite: null,
+        joinUrl: null,
+        status: 'idle',
+        overallStatus: 'none',
+        overallStatusText: '',
+        lastError: undefined,
+        debugState: undefined,
+        operationLog: [],
+        clearOperationLog: vi.fn(),
+        start: vi.fn(),
+        stop: vi.fn().mockResolvedValue(undefined),
+        endRoom: vi.fn().mockResolvedValue(undefined),
+        sendFast: vi.fn(),
+        sendReliable: vi.fn(),
+        reconnectSoft: vi.fn(),
+        reconnectHard: vi.fn(),
+        ...overrides,
+    }
+}
+
 vi.mock('@vibe-rtc/rtc-react', () => ({
     useVibeRTCSession: (options: unknown) => mockUseVibeRTCSession(options),
 }))
@@ -39,24 +61,7 @@ describe('HomePage', () => {
                       }
                     : null
 
-            return {
-                invite,
-                joinUrl: null,
-                status: 'idle',
-                overallStatus: 'none',
-                overallStatusText: '',
-                lastError: undefined,
-                debugState: undefined,
-                operationLog: [],
-                clearOperationLog: vi.fn(),
-                start: vi.fn(),
-                stop: vi.fn(),
-                endRoom: vi.fn(),
-                sendFast: vi.fn(),
-                sendReliable: vi.fn(),
-                reconnectSoft: vi.fn(),
-                reconnectHard: vi.fn(),
-            }
+            return makeRtcMock({ invite })
         })
     })
 
@@ -127,5 +132,60 @@ describe('HomePage', () => {
         await waitFor(() => {
             expect(screen.queryByTestId('join-room-modal')).not.toBeInTheDocument()
         })
+    })
+
+    it('cancels room creation before invite appears via rtc.stop()', async () => {
+        const stop = vi.fn().mockResolvedValue(undefined)
+        const endRoom = vi.fn().mockResolvedValue(undefined)
+        mockUseVibeRTCSession.mockReturnValue(
+            makeRtcMock({
+                invite: null,
+                stop,
+                endRoom,
+            }),
+        )
+
+        render(<HomePage />)
+
+        fireEvent.click(screen.getByTestId('create-room-default-btn'))
+        expect(screen.getByTestId('create-room-overlay')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByTestId('create-room-cancel-btn'))
+
+        await waitFor(() => {
+            expect(stop).toHaveBeenCalledTimes(1)
+        })
+        expect(endRoom).not.toHaveBeenCalled()
+        await waitFor(() => {
+            expect(screen.queryByTestId('create-room-overlay')).not.toBeInTheDocument()
+        })
+    })
+
+    it('cancels room creation after invite appears via rtc.endRoom()', async () => {
+        const stop = vi.fn().mockResolvedValue(undefined)
+        const endRoom = vi.fn().mockResolvedValue(undefined)
+        mockUseVibeRTCSession.mockReturnValue(
+            makeRtcMock({
+                invite: {
+                    roomId: 'room-created',
+                    sessionId: 'session-created',
+                    connectionStrategy: 'LAN_FIRST',
+                },
+                stop,
+                endRoom,
+            }),
+        )
+
+        render(<HomePage />)
+
+        fireEvent.click(screen.getByTestId('create-room-default-btn'))
+        expect(screen.getByTestId('create-room-overlay')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByTestId('create-room-cancel-btn'))
+
+        await waitFor(() => {
+            expect(endRoom).toHaveBeenCalledTimes(1)
+        })
+        expect(stop).not.toHaveBeenCalled()
     })
 })

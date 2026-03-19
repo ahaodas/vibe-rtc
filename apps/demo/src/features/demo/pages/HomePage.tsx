@@ -1,5 +1,5 @@
 import { useVibeRTCSession } from '@vibe-rtc/rtc-react'
-import { useEffect, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useReducer, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Credits } from '@/features/demo/components/Credits'
 import {
@@ -46,6 +46,21 @@ export function HomePage() {
         dispatch(homeActions.setCreateStrategy(strategyMode))
         dispatch(homeActions.setCreateProgressRatio(0))
     }
+
+    const cancelCreateRoom = useCallback(async () => {
+        if (!state.createPending) return
+
+        const roomId = rtc.invite?.roomId?.trim()
+        createNavigationQueuedRef.current = false
+        dispatch(homeActions.resetCreateState())
+
+        try {
+            if (roomId) await rtc.endRoom()
+            else await rtc.stop()
+        } catch {
+            // noop
+        }
+    }, [rtc.endRoom, rtc.invite?.roomId, rtc.stop, state.createPending])
 
     useEffect(() => {
         if (!state.createPending) return
@@ -183,6 +198,14 @@ export function HomePage() {
                             testId="create-room-progress"
                             barTestId="create-room-progress-bar"
                         />
+                        <menu className="leaveModalActions">
+                            <AppButton
+                                onClick={() => void cancelCreateRoom()}
+                                testId="create-room-cancel-btn"
+                            >
+                                Cancel
+                            </AppButton>
+                        </menu>
                     </section>
                 </div>
             ) : null}
