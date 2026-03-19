@@ -41,4 +41,4 @@ pnpm test:e2e:emu
 ## Notes
 
 - Demo Playwright smoke tests are tagged as `@demo-smoke` and include route checks plus backend-dependent caller/callee flow.
-- Backend-dependent tests are skipped automatically if required Firebase env vars are missing.
+- Backend-dependent tests now fail fast if required Firebase env vars are missing.

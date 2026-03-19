@@ -1,10 +1,53 @@
 import { expect, test, type Page } from '@playwright/test'
+import { loadEnv } from 'vite'
 
 const READY_TIMEOUT_MS = 45_000
+const DEMO_ENV = loadEnv(process.env.NODE_ENV ?? 'development', process.cwd(), '')
+const hasValue = (value: string | undefined) => Boolean(value && value.trim().length > 0)
 const HAS_SIGNALING_ENV =
-    Boolean(process.env.VITE_FIREBASE_PROJECT_ID) &&
-    Boolean(process.env.VITE_FIREBASE_API_KEY) &&
-    Boolean(process.env.VITE_FIREBASE_APP_ID)
+    hasValue(process.env.VITE_FIREBASE_PROJECT_ID ?? DEMO_ENV.VITE_FIREBASE_PROJECT_ID) &&
+    hasValue(process.env.VITE_FIREBASE_API_KEY ?? DEMO_ENV.VITE_FIREBASE_API_KEY) &&
+    hasValue(process.env.VITE_FIREBASE_APP_ID ?? DEMO_ENV.VITE_FIREBASE_APP_ID)
+const CALLER_ATTACH_URL_RE = /#\/attach\/caller\/[^?]+(?:\?.*)?$/
+
+function isIgnorableBrowserNoise(message: string, sourceUrl?: string): boolean {
+    if (
+        message.includes('Failed to load resource: the server responded with a status of 400') &&
+        sourceUrl?.includes('firestore.googleapis.com')
+    ) {
+        return true
+    }
+
+    return (
+        message.includes('ChromeMethodBFE') ||
+        message.includes('Unable to create writable file') ||
+        message.includes('IO error:') ||
+        message.includes('content.js') ||
+        message.includes('polyfill.js')
+    )
+}
+
+function collectUnexpectedBrowserErrors(page: Page, tag: string) {
+    const errors: string[] = []
+
+    page.on('console', (msg) => {
+        if (msg.type() !== 'error') return
+        const text = msg.text()
+        const sourceUrl = msg.location().url
+        if (isIgnorableBrowserNoise(text, sourceUrl)) return
+        errors.push(`[${tag}][console:error] ${text}`)
+    })
+
+    page.on('pageerror', (error) => {
+        const text = error instanceof Error ? error.message : String(error)
+        if (isIgnorableBrowserNoise(text)) return
+        errors.push(`[${tag}][pageerror] ${text}`)
+    })
+
+    return () => {
+        expect(errors, `Unexpected browser errors:\n${errors.join('\n')}`).toEqual([])
+    }
+}
 
 function extractCallerRoomId(url: string): string {
     const match = url.match(/#\/attach\/caller\/([^?]+)/)
@@ -34,41 +77,57 @@ async function sendMessage(page: Page, mode: 'fast' | 'reliable', text: string) 
 }
 
 test('@demo-smoke join modal routes to callee session path', async ({ page }) => {
-    await openHome(page)
+    const assertNoUnexpectedErrors = collectUnexpectedBrowserErrors(page, 'join-modal')
+    try {
+        await openHome(page)
 
-    await page.getByTestId('open-join-room-btn').click()
-    await expect(page.getByTestId('join-room-submit-btn')).toBeDisabled()
+        await page.getByTestId('open-join-room-btn').click()
+        await expect(page.getByTestId('join-room-submit-btn')).toBeDisabled()
 
-    await page.getByTestId('join-room-input').fill('  room-join  ')
-    await page.getByTestId('join-room-submit-btn').click()
+        await page.getByTestId('join-room-input').fill('  room-join  ')
+        await page.getByTestId('join-room-submit-btn').click()
 
-    await expect(page).toHaveURL(/#\/attach\/callee\/room-join$/)
-    await expect(page.getByTestId('session-page')).toBeVisible()
+        await expect(page).toHaveURL(/#\/attach\/callee\/room-join$/)
+        await expect(page.getByTestId('session-page')).toBeVisible()
+    } finally {
+        assertNoUnexpectedErrors()
+    }
 })
 
 test('@demo-smoke attach query redirect resolves to session route', async ({ page }) => {
-    await page.goto('/#/attach?as=callee&room=redirect-room&strategy=native')
+    const assertNoUnexpectedErrors = collectUnexpectedBrowserErrors(page, 'attach-redirect')
+    try {
+        await page.goto('/#/attach?as=callee&room=redirect-room&strategy=native')
 
-    await expect(page).toHaveURL(/#\/attach\/callee\/redirect-room\?strategy=native$/)
-    await expect(page.getByTestId('session-page')).toBeVisible()
+        await expect(page).toHaveURL(/#\/attach\/callee\/redirect-room\?strategy=native$/)
+        await expect(page.getByTestId('session-page')).toBeVisible()
+    } finally {
+        assertNoUnexpectedErrors()
+    }
 })
 
 test.describe('backend smoke @demo-smoke', () => {
-    test.skip(
-        !HAS_SIGNALING_ENV,
-        'Requires Firebase signaling env vars: VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_API_KEY, VITE_FIREBASE_APP_ID',
-    )
+    test.beforeAll(() => {
+        if (HAS_SIGNALING_ENV) return
+        throw new Error(
+            'Missing Firebase signaling env vars: VITE_FIREBASE_PROJECT_ID, VITE_FIREBASE_API_KEY, VITE_FIREBASE_APP_ID',
+        )
+    })
 
     test('home create room routes to caller session', async ({ page }) => {
-        await openHome(page)
-
-        await page.getByTestId('create-room-default-btn').click()
-
-        await expect(page).toHaveURL(/#\/attach\/caller\/[^?]+$/, {
-            timeout: READY_TIMEOUT_MS,
-        })
-        await expect(page.getByTestId('session-page')).toBeVisible()
-        expect(extractCallerRoomId(page.url()).length).toBeGreaterThan(0)
+        const assertNoUnexpectedErrors = collectUnexpectedBrowserErrors(page, 'create-room')
+        try {
+            await openHome(page)
+            await page.getByTestId('create-room-default-btn').click()
+            await expect(page).toHaveURL(CALLER_ATTACH_URL_RE, {
+                timeout: READY_TIMEOUT_MS,
+            })
+            await expect(page.getByTestId('session-page')).toBeVisible()
+            const roomId = extractCallerRoomId(page.url())
+            expect(roomId.length).toBeGreaterThan(0)
+        } finally {
+            assertNoUnexpectedErrors()
+        }
     })
 
     test('caller/callee exchange messages and follow updated leave behavior', async ({ browser }) => {
@@ -76,11 +135,14 @@ test.describe('backend smoke @demo-smoke', () => {
         const calleeContext = await browser.newContext()
         const callerPage = await callerContext.newPage()
         const calleePage = await calleeContext.newPage()
+        const assertCallerErrors = collectUnexpectedBrowserErrors(callerPage, 'caller')
+        const assertCalleeErrors = collectUnexpectedBrowserErrors(calleePage, 'callee')
+        let pendingError: unknown
 
         try {
             await openHome(callerPage)
             await callerPage.getByTestId('create-room-default-btn').click()
-            await expect(callerPage).toHaveURL(/#\/attach\/caller\/[^?]+$/, {
+            await expect(callerPage).toHaveURL(CALLER_ATTACH_URL_RE, {
                 timeout: READY_TIMEOUT_MS,
             })
 
@@ -113,7 +175,9 @@ test.describe('backend smoke @demo-smoke', () => {
             await calleePage.getByTestId('leave-session-confirm-btn').click()
             await expect(calleePage).toHaveURL(/#\/$/, { timeout: READY_TIMEOUT_MS })
 
-            await expect(callerPage).toHaveURL(new RegExp(`#\\/attach\\/caller\\/${roomId}$`), {
+            await expect(
+                callerPage,
+            ).toHaveURL(new RegExp(`#\\/attach\\/caller\\/${roomId}(?:\\?.*)?$`), {
                 timeout: READY_TIMEOUT_MS,
             })
             await expect(callerPage.getByTestId('callee-qr-modal')).toBeVisible({
@@ -129,11 +193,20 @@ test.describe('backend smoke @demo-smoke', () => {
             )
             await callerPage.getByTestId('leave-session-confirm-btn').click()
             await expect(callerPage).toHaveURL(/#\/$/, { timeout: READY_TIMEOUT_MS })
+        } catch (error) {
+            pendingError = error
         } finally {
+            try {
+                assertCallerErrors()
+                assertCalleeErrors()
+            } catch (error) {
+                if (!pendingError) pendingError = error
+            }
             await Promise.all([
                 calleeContext.close().catch(() => {}),
                 callerContext.close().catch(() => {}),
             ])
+            if (pendingError) throw pendingError
         }
     })
 })
