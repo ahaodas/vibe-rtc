@@ -1,7 +1,5 @@
 export const APP_BASE_PATH = (import.meta.env.BASE_URL ?? '/').replace(/\/$/, '')
 
-export const QR_FOREGROUND = '#c4b550ff'
-export const QR_BACKGROUND = '#3e4637'
 export const PROGRESS_STEP_PX = 10
 
 export const CREATE_PROGRESS_MAX_BEFORE_READY = 0.92

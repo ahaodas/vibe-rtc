@@ -1,6 +1,26 @@
 import * as QRCode from 'qrcode'
 import { useEffect } from 'react'
-import { QR_BACKGROUND, QR_FOREGROUND } from '@/features/demo/model/constants'
+
+const FALLBACK_QR_FOREGROUND = '#000000'
+const FALLBACK_QR_BACKGROUND = '#ffffff'
+
+function resolveQrPalette() {
+    if (typeof window === 'undefined') {
+        return {
+            foreground: FALLBACK_QR_FOREGROUND,
+            background: FALLBACK_QR_BACKGROUND,
+        }
+    }
+
+    const styles = window.getComputedStyle(document.documentElement)
+    const foreground = styles.getPropertyValue('--accent').trim()
+    const background = styles.getPropertyValue('--bg').trim()
+
+    return {
+        foreground: foreground || FALLBACK_QR_FOREGROUND,
+        background: background || FALLBACK_QR_BACKGROUND,
+    }
+}
 
 type UseSessionQrCodeArgs = {
     calleeUrl: string
@@ -16,12 +36,14 @@ export function useSessionQrCode({ calleeUrl, onChange }: UseSessionQrCodeArgs) 
             return
         }
 
+        const palette = resolveQrPalette()
+
         void QRCode.toDataURL(calleeUrl, {
             width: 768,
             margin: 0,
             color: {
-                dark: QR_FOREGROUND,
-                light: QR_BACKGROUND,
+                dark: palette.foreground,
+                light: palette.background,
             },
         })
             .then((dataUrl) => {

@@ -344,6 +344,7 @@ body {
     padding: 8px;
     display: flex;
     flex-direction: column;
+    gap: 8px;
 }
 
 .qrModalHeader {
@@ -351,7 +352,6 @@ body {
     justify-content: space-between;
     align-items: center;
     gap: 10px;
-    margin-bottom: 8px;
 }
 
 .qrModalTitle {
