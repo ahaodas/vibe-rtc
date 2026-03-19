@@ -86,7 +86,10 @@ const decodeMessage = (raw: string): PingMessage | null => {
 const cloneSnapshot = (snapshot: PingSnapshot): PingSnapshot => ({ ...snapshot })
 
 export const createPingService = (options: PingServiceOptions): PingService => {
-    const intervalMs = clampInt(options.intervalMs, DEFAULT_INTERVAL_MS, 1)
+    const pingEnabled =
+        options.intervalMs == null ||
+        (Number.isFinite(options.intervalMs) && (options.intervalMs as number) > 0)
+    const intervalMs = pingEnabled ? clampInt(options.intervalMs, DEFAULT_INTERVAL_MS, 1) : 0
     const windowSize = clampInt(options.windowSize, DEFAULT_WINDOW_SIZE, 1)
     const now = options.now ?? perfNow
     const nowEpoch = options.nowEpoch ?? (() => Date.now())
@@ -177,6 +180,7 @@ export const createPingService = (options: PingServiceOptions): PingService => {
     }
 
     const start = () => {
+        if (!pingEnabled) return
         if (intervalId) return
         tick()
         intervalId = setInterval(() => tick(), intervalMs)
@@ -211,6 +215,8 @@ export const createPingService = (options: PingServiceOptions): PingService => {
     const handleIncoming = (message: string): boolean => {
         const parsed = decodeMessage(message)
         if (!parsed) return false
+
+        if (!pingEnabled) return true
 
         if (parsed.type === 'ping') {
             if (options.isOpen()) {

@@ -113,6 +113,28 @@ describe('createPingService', () => {
         expect(service.getSnapshot().status).toBe('idle')
     })
 
+    it('disables ping traffic when interval is zero or negative', () => {
+        const sent: string[] = []
+        const service = createPingService({
+            send: (message) => sent.push(message),
+            isOpen: () => true,
+            intervalMs: 0,
+        })
+
+        service.start()
+        expect(sent).toHaveLength(0)
+        expect(
+            service.handleIncoming(
+                toWire({
+                    type: 'ping',
+                    sentAt: 42,
+                    seq: 7,
+                }),
+            ),
+        ).toBe(true)
+        expect(sent).toHaveLength(0)
+    })
+
     it('ignores malformed or unrelated incoming payloads', () => {
         const sent = vi.fn()
         const service = createPingService({
