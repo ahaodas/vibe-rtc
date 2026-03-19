@@ -1,5 +1,19 @@
 # @vibe-rtc/rtc-firebase
 
+## [0.2.8](https://github.com/ahaodas/vibe-rtc/compare/rtc-firebase-v0.2.7...rtc-firebase-v0.2.8) (2026-03-19)
+
+
+### Bug Fixes
+
+* **rtc-firebase:** avoid self-takeover events on local leave ([6c9f2bc](https://github.com/ahaodas/vibe-rtc/commit/6c9f2bc49eb88719cd51c67eb165c34a3b273741))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @vibe-rtc/rtc-core bumped to 0.4.0
+
 ## [0.2.7](https://github.com/ahaodas/vibe-rtc/compare/rtc-firebase-v0.2.6...rtc-firebase-v0.2.7) (2026-03-18)
 
 
