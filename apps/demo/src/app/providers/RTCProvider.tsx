@@ -10,43 +10,31 @@ import {
     DEMO_PING_INTERVAL_MS,
     DEMO_PING_WINDOW_SIZE,
 } from '@/features/demo/model/constants'
-import {
-    DemoSecurityBusProvider,
-    useCreateDemoSecurityBus,
-} from '@/features/demo/model/securityBus'
 
 type RTCProviderProps = {
     children: ReactNode
 }
 
 export function RTCProvider({ children }: RTCProviderProps) {
-    const securityBus = useCreateDemoSecurityBus()
-    const { publishRoomOccupied, publishShareLink, publishTakenOver } = securityBus
     const rtcConfiguration = createDemoRtcConfiguration()
 
     const createSignalServer = useCallback(async () => {
-        return await createDemoSignalServer({
-            publishRoomOccupied,
-            publishShareLink,
-            publishTakenOver,
-        })()
-    }, [publishRoomOccupied, publishShareLink, publishTakenOver])
+        return await createDemoSignalServer()()
+    }, [])
 
     return (
-        <DemoSecurityBusProvider value={securityBus}>
-            <VibeRTCProvider
-                rtcConfiguration={rtcConfiguration}
-                connectionStrategy="LAN_FIRST"
-                lanFirstTimeoutMs={DEMO_LAN_FIRST_TIMEOUT_MS}
-                pingIntervalMs={DEMO_PING_INTERVAL_MS}
-                pingWindowSize={DEMO_PING_WINDOW_SIZE}
-                netRttIntervalMs={DEMO_NET_RTT_INTERVAL_MS}
-                renderLoading={<BootLoadingOverlay />}
-                renderBootError={renderRtcBootError}
-                createSignalServer={createSignalServer}
-            >
-                {children}
-            </VibeRTCProvider>
-        </DemoSecurityBusProvider>
+        <VibeRTCProvider
+            rtcConfiguration={rtcConfiguration}
+            connectionStrategy="LAN_FIRST"
+            lanFirstTimeoutMs={DEMO_LAN_FIRST_TIMEOUT_MS}
+            pingIntervalMs={DEMO_PING_INTERVAL_MS}
+            pingWindowSize={DEMO_PING_WINDOW_SIZE}
+            netRttIntervalMs={DEMO_NET_RTT_INTERVAL_MS}
+            renderLoading={<BootLoadingOverlay />}
+            renderBootError={renderRtcBootError}
+            createSignalServer={createSignalServer}
+        >
+            {children}
+        </VibeRTCProvider>
     )
 }

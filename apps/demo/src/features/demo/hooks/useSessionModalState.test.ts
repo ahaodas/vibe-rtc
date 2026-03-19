@@ -30,7 +30,7 @@ describe('useSessionModalState', () => {
         expect(props.setRoomNotFoundModalOpen).toHaveBeenCalledWith(true)
     })
 
-    it('opens takeover modal and resets takeover metadata on takeover error', () => {
+    it('opens takeover modal on takeover error', () => {
         const props = makeProps({ isTakeoverError: true })
 
         renderHook(() => useSessionModalState(props))

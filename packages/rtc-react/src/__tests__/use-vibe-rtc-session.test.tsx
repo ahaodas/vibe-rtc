@@ -345,6 +345,50 @@ describe('useVibeRTCSession', () => {
         })
     })
 
+    it('forwards takeover event with bySessionId via onTakenOver callback', async () => {
+        const signaler = enqueueSignaler()
+        const onTakenOver = vi.fn()
+        await renderSession({
+            role: 'caller',
+            invite: {
+                roomId: 'room-takeover',
+                sessionId: 'session-takeover',
+                connectionStrategy: 'LAN_FIRST',
+            },
+            onTakenOver,
+            debug: false,
+            logMessages: false,
+        })
+
+        await waitFor(() => {
+            expect(signaler.joinRoom).toHaveBeenCalledWith('room-takeover')
+        })
+
+        await act(async () => {
+            getHandlers(signaler).debug?.({
+                roomId: 'room-takeover',
+                role: 'caller',
+                lastEvent: 'takeover-detected',
+                takeoverBySessionId: 'new-owner-session',
+                pcGeneration: 3,
+            })
+            getHandlers(signaler).debug?.({
+                roomId: 'room-takeover',
+                role: 'caller',
+                lastEvent: 'takeover-detected',
+                takeoverBySessionId: 'new-owner-session',
+                pcGeneration: 3,
+            })
+        })
+
+        expect(onTakenOver).toHaveBeenCalledTimes(1)
+        expect(onTakenOver).toHaveBeenCalledWith({
+            roomId: 'room-takeover',
+            role: 'caller',
+            bySessionId: 'new-owner-session',
+        })
+    })
+
     it('disables ping subsystem when onPing callback is absent', async () => {
         const signaler = enqueueSignaler()
         await renderSession({

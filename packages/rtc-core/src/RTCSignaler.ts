@@ -190,6 +190,7 @@ export interface DebugState {
         remoteDropped: Record<CandidateType, number>
     }
     selectedPath?: CandidateType
+    takeoverBySessionId?: string | null
     ping: PingSnapshot
     netRtt: NetRttSnapshot
     lastEvent?: string
@@ -287,6 +288,7 @@ export class RTCSignaler {
     private ownSlotCheckAt = 0
     private ownSlotCheckInFlight?: Promise<boolean>
     private ownSlotSessionMismatchKey: string | null = null
+    private takeoverBySessionId: string | null = null
     private candidateStats = {
         localSeen: this.makeCandidateCountMap(),
         localSent: this.makeCandidateCountMap(),
@@ -512,6 +514,7 @@ export class RTCSignaler {
         this.ownSlotCheckAt = 0
         this.ownSlotCheckInFlight = undefined
         this.ownSlotSessionMismatchKey = null
+        this.takeoverBySessionId = null
         this.remoteProgressSeq = 0
         this.remoteProgressLastAt = 0
         this.signalSequence = 0
@@ -1131,6 +1134,7 @@ export class RTCSignaler {
         }
 
         this.connectedOrSubbed = false
+        this.takeoverBySessionId = null
         this.phase = 'idle'
         this.emitDebug('hangup done')
     }
@@ -1393,6 +1397,7 @@ export class RTCSignaler {
             ownerParticipantId: slot?.participantId ?? null,
             ownerSessionId: slot?.sessionId ?? null,
         })
+        this.takeoverBySessionId = slot?.sessionId ?? null
         this.emitDebug('takeover-detected')
         this.onError(
             this.raiseError(
@@ -2622,6 +2627,7 @@ export class RTCSignaler {
             participantId: this.participantId,
             candidateStats: this.candidateStats,
             selectedPath: this.selectedPath,
+            takeoverBySessionId: this.takeoverBySessionId,
             ping: this.pingService.getSnapshot(),
             netRtt: this.netRttService
                 ? this.netRttService.getSnapshot()

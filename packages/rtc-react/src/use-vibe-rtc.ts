@@ -28,6 +28,7 @@ type NormalizedSemanticOptions = {
     debug: boolean
     logMessages: boolean
     hasOnPing: boolean
+    hasOnTakenOver: boolean
     hasFastSubscriber: boolean
     hasReliableSubscriber: boolean
 }
@@ -93,6 +94,7 @@ const normalizeSemanticOptions = (options: UseVibeRTCOptions): NormalizedSemanti
         debug: options.debug ?? false,
         logMessages: options.logMessages ?? false,
         hasOnPing: typeof options.onPing === 'function',
+        hasOnTakenOver: typeof options.onTakenOver === 'function',
         hasFastSubscriber: typeof options.onFastMessage === 'function',
         hasReliableSubscriber: typeof options.onReliableMessage === 'function',
     }
@@ -243,12 +245,14 @@ export function useVibeRTCSession(options: UseVibeRTCOptions): InviteDrivenVibeR
 
     const callbacksRef = useRef({
         onPing: options?.onPing,
+        onTakenOver: options?.onTakenOver,
         onFastMessage: options?.onFastMessage,
         onReliableMessage: options?.onReliableMessage,
         onError: options?.onError,
     })
     callbacksRef.current = {
         onPing: options?.onPing,
+        onTakenOver: options?.onTakenOver,
         onFastMessage: options?.onFastMessage,
         onReliableMessage: options?.onReliableMessage,
         onError: options?.onError,
@@ -269,6 +273,7 @@ export function useVibeRTCSession(options: UseVibeRTCOptions): InviteDrivenVibeR
                 debug: semantic.debug,
                 logMessages: semantic.logMessages,
                 hasOnPing: semantic.hasOnPing,
+                hasOnTakenOver: semantic.hasOnTakenOver,
                 hasFastSubscriber: semantic.hasFastSubscriber,
                 hasReliableSubscriber: semantic.hasReliableSubscriber,
             }),
@@ -283,6 +288,7 @@ export function useVibeRTCSession(options: UseVibeRTCOptions): InviteDrivenVibeR
             semantic.debug,
             semantic.logMessages,
             semantic.hasOnPing,
+            semantic.hasOnTakenOver,
             semantic.hasFastSubscriber,
             semantic.hasReliableSubscriber,
         ],
@@ -296,6 +302,7 @@ export function useVibeRTCSession(options: UseVibeRTCOptions): InviteDrivenVibeR
     const messageHandlerUnsubRef = useRef<(() => void) | null>(null)
     const debugHandlerUnsubRef = useRef<(() => void) | null>(null)
     const lastDebugKeyRef = useRef<string | null>(null)
+    const lastTakeoverKeyRef = useRef<string | null>(null)
 
     const [status, setStatusState] = useState<ConnectionStatus>('idle')
     const statusRef = useRef<ConnectionStatus>('idle')
@@ -350,6 +357,7 @@ export function useVibeRTCSession(options: UseVibeRTCOptions): InviteDrivenVibeR
             debugHandlerUnsubRef.current = null
         }
         lastDebugKeyRef.current = null
+        lastTakeoverKeyRef.current = null
     }, [])
 
     const syncDynamicHandlers = useCallback(() => {
@@ -389,41 +397,70 @@ export function useVibeRTCSession(options: UseVibeRTCOptions): InviteDrivenVibeR
         }
 
         const shouldHandleDebug =
-            currentSemantic.debug || currentSemantic.logMessages || currentSemantic.hasOnPing
+            currentSemantic.debug ||
+            currentSemantic.logMessages ||
+            currentSemantic.hasOnPing ||
+            currentSemantic.hasOnTakenOver
 
         if (shouldHandleDebug && !debugHandlerUnsubRef.current) {
             debugHandlerUnsubRef.current = signaler.setDebugHandler((debugState) => {
                 const latestSemantic = semanticRef.current
                 if (!latestSemantic) return
-                const debugKey = [
-                    debugState.pcGeneration,
-                    debugState.phase,
-                    debugState.lastEvent,
-                    debugState.pcState,
-                    debugState.iceState,
-                    debugState.fast?.state,
-                    debugState.reliable?.state,
-                    debugState.icePhase,
-                ].join('|')
 
                 if (latestSemantic.hasOnPing) {
                     callbacksRef.current.onPing?.(debugState.ping)
                 }
 
-                if (
-                    (latestSemantic.debug || latestSemantic.logMessages) &&
-                    lastDebugKeyRef.current !== debugKey
-                ) {
-                    lastDebugKeyRef.current = debugKey
-                    if (latestSemantic.debug) {
-                        setDebugState(debugState)
+                if (latestSemantic.hasOnTakenOver && debugState.lastEvent === 'takeover-detected') {
+                    const takeoverDebugState = debugState as DebugState & {
+                        takeoverBySessionId?: string | null
                     }
-                    if (latestSemantic.logMessages) {
-                        pushOperation(
-                            toOperationScope(debugState.lastEvent),
-                            toDebugLogLine(debugState),
-                            debugState.lastEvent,
-                        )
+                    const bySessionIdRaw =
+                        typeof takeoverDebugState.takeoverBySessionId === 'string'
+                            ? takeoverDebugState.takeoverBySessionId.trim()
+                            : ''
+                    const roomId = debugState.roomId?.trim() ?? ''
+                    if (roomId) {
+                        const takeoverKey = [
+                            roomId,
+                            debugState.role,
+                            bySessionIdRaw || 'none',
+                            String(debugState.pcGeneration),
+                        ].join('|')
+                        if (lastTakeoverKeyRef.current !== takeoverKey) {
+                            lastTakeoverKeyRef.current = takeoverKey
+                            callbacksRef.current.onTakenOver?.({
+                                roomId,
+                                role: debugState.role,
+                                bySessionId: bySessionIdRaw || undefined,
+                            })
+                        }
+                    }
+                }
+
+                if (latestSemantic.debug || latestSemantic.logMessages) {
+                    const debugKey = [
+                        debugState.pcGeneration,
+                        debugState.phase,
+                        debugState.lastEvent,
+                        debugState.pcState,
+                        debugState.iceState,
+                        debugState.fast?.state,
+                        debugState.reliable?.state,
+                        debugState.icePhase,
+                    ].join('|')
+                    if (lastDebugKeyRef.current !== debugKey) {
+                        lastDebugKeyRef.current = debugKey
+                        if (latestSemantic.debug) {
+                            setDebugState(debugState)
+                        }
+                        if (latestSemantic.logMessages) {
+                            pushOperation(
+                                toOperationScope(debugState.lastEvent),
+                                toDebugLogLine(debugState),
+                                debugState.lastEvent,
+                            )
+                        }
                     }
                 }
 
@@ -438,6 +475,7 @@ export function useVibeRTCSession(options: UseVibeRTCOptions): InviteDrivenVibeR
             debugHandlerUnsubRef.current()
             debugHandlerUnsubRef.current = null
             lastDebugKeyRef.current = null
+            lastTakeoverKeyRef.current = null
             setDebugState(undefined)
         }
     }, [pushOperation])

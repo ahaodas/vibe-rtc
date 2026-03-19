@@ -11,7 +11,6 @@ import { useSessionConnectProgress } from '@/features/demo/hooks/useSessionConne
 import { useSessionModalState } from '@/features/demo/hooks/useSessionModalState'
 import { useSessionNetworkWarning } from '@/features/demo/hooks/useSessionNetworkWarning'
 import { useSessionQrCode } from '@/features/demo/hooks/useSessionQrCode'
-import { useSessionSecurityEvents } from '@/features/demo/hooks/useSessionSecurityEvents'
 import { useSessionTracing } from '@/features/demo/hooks/useSessionTracing'
 import { resolveLatencyTone } from '@/features/demo/model/latency'
 import { DEMO_ROUTE_PATHS, DEMO_ROUTE_QUERY_KEYS } from '@/features/demo/model/routePaths'
@@ -60,15 +59,6 @@ export function SessionPage() {
             connectionStrategy: strategyMode === 'native' ? 'BROWSER_NATIVE' : 'LAN_FIRST',
         }
     }, [inviteSessionId, isRouteValid, routeRoomId, strategyMode])
-    const rtc = useVibeRTCSession({
-        role: routeRole,
-        invite,
-        autoStart: isRouteValid,
-        autoCreate: false,
-        debug: true,
-        logMessages: true,
-        onPing: NOOP_PING_HANDLER,
-    })
 
     const setRoomNotFoundModalOpen = useCallback(
         (value: boolean) => dispatch(sessionActions.setRoomNotFoundModalOpen(value)),
@@ -111,18 +101,24 @@ export function SessionPage() {
         [],
     )
 
-    useSessionSecurityEvents({
-        isRouteValid,
-        role: routeRole,
-        roomId: routeRoomId,
-        onRoomOccupied: () => {
-            setRoomOccupiedModalOpen(true)
-        },
-        onTakenOver: (bySessionId) => {
-            setTakeoverBySessionId(bySessionId)
+    const handleTakenOver = useCallback(
+        (payload: { bySessionId?: string }) => {
+            setTakeoverBySessionId(payload.bySessionId?.trim() || null)
             setSecurityTakeoverDetected(true)
             setTakeoverModalOpen(true)
         },
+        [setSecurityTakeoverDetected, setTakeoverBySessionId, setTakeoverModalOpen],
+    )
+
+    const rtc = useVibeRTCSession({
+        role: routeRole,
+        invite,
+        autoStart: isRouteValid,
+        autoCreate: false,
+        debug: true,
+        logMessages: true,
+        onPing: NOOP_PING_HANDLER,
+        onTakenOver: handleTakenOver,
     })
 
     useSessionTracing({

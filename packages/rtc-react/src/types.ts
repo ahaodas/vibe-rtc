@@ -126,6 +126,11 @@ export interface UseVibeRTCOptions {
     debug?: boolean
     logMessages?: boolean
     onPing?: (snapshot: PingSnapshot) => void
+    onTakenOver?: (payload: {
+        roomId: string
+        role: 'caller' | 'callee'
+        bySessionId?: string
+    }) => void
     onFastMessage?: (message: string) => void
     onReliableMessage?: (message: string) => void
     onError?: (error: VibeRTCError) => void

@@ -55,6 +55,9 @@ const rtc = useVibeRTCSession({
   autoCreate: false, // default false
   debug: true,       // opt-in rich debug
   logMessages: true, // opt-in operation log verbosity
+  onTakenOver: ({ roomId, bySessionId }) => {
+    // optional same-role takeover signal with owner session id
+  },
 })
 ```
 
@@ -78,7 +81,7 @@ Behavior:
 - Invite `sessionId` is optional; the hook can resolve/fill effective role session internally.
 - If `invite` is absent and `role='caller'` with `autoCreate=true`, hook creates a new room.
 - If `invite` is absent and `role='callee'`, hook stays idle/waiting.
-- Hook reacts to semantic option changes (`invite`, `role`, `autoStart`, `autoCreate`, `debug`, `logMessages`, presence of `onPing`) without unnecessary restarts on object identity-only rerenders.
+- Hook reacts to semantic option changes (`invite`, `role`, `autoStart`, `autoCreate`, `debug`, `logMessages`, presence of `onPing` / `onTakenOver`) without unnecessary restarts on object identity-only rerenders.
 - Invite persistence is external: read/write invite in URL/storage/router outside the hook and pass it through `options.invite`.
 
 ## Example: Durable Reconnect
