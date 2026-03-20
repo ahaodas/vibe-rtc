@@ -1,5 +1,12 @@
 # @vibe-rtc/rtc-react
 
+## [0.4.1](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.4.0...rtc-react-v0.4.1) (2026-03-20)
+
+
+### Bug Fixes
+
+* **rtc-react:** refine package meta ([48005f7](https://github.com/ahaodas/vibe-rtc/commit/48005f7e30e07a5df3a85b69a2837e367bf68be9))
+
 ## [0.4.0](https://github.com/ahaodas/vibe-rtc/compare/rtc-react-v0.3.9...rtc-react-v0.4.0) (2026-03-19)
 
 
