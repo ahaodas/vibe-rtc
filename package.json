@@ -33,7 +33,9 @@
         "biome:fix:safe": "biome check --write ./packages ./apps",
         "dev:pkgs": "pnpm -w --parallel --filter @vibe-rtc/* run build:watch",
         "lint": "biome lint",
-        "precommit:packages": "pnpm -r --filter './packages/*' --filter './apps/*' run precommit",
+        "biome": "biome check ./packages ./apps",
+        "test:all": "pnpm -r --filter './packages/rtc-core' --filter './packages/rtc-firebase' --filter './packages/rtc-react' --filter './apps/*' run test",
+        "precommit": "pnpm run typecheck && pnpm run biome && pnpm run test:all",
         "typecheck": "bash -lc 'set -euo pipefail; for f in packages/*/tsconfig.json apps/*/tsconfig.json; do [ -f \"$f\" ] && pnpm exec tsc -p \"$f\" --noEmit; done'",
         "typecheck:if-ts-staged": "bash ./scripts/typecheck-if-ts-staged.sh",
         "commitlint": "commitlint --config commitlint.config.cjs"
