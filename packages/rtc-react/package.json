@@ -5,7 +5,8 @@
     "type": "module",
     "private": false,
     "keywords": [
-        "web-rtc"
+        "web-rtc",
+        "react"
     ],
     "homepage": "https://github.com/ahaodas/vibe-rtc/tree/master/packages/rtc-react",
     "repository": {
