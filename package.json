@@ -4,6 +4,11 @@
     "main": "index.js",
     "private": true,
     "packageManager": "pnpm@10.21.0",
+    "pnpm": {
+        "overrides": {
+            "@tootallnate/once": "^3.0.1"
+        }
+    },
     "scripts": {
         "prepare": "husky",
         "install:all": "pnpm install -w --frozen-lockfile",
@@ -44,11 +49,11 @@
     "description": "",
     "devDependencies": {
         "@biomejs/biome": "2.3.2",
-        "@commitlint/cli": "^19.8.0",
-        "@commitlint/config-conventional": "^19.8.0",
-        "@types/node": "^24.9.1",
+        "@commitlint/cli": "^19.8.1",
+        "@commitlint/config-conventional": "^19.8.1",
+        "@types/node": "^24.12.0",
         "husky": "^9.1.7",
-        "tsup": "^8.5.0",
+        "tsup": "^8.5.1",
         "typescript": "^5.9.3"
     }
 }
