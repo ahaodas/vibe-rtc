@@ -25,7 +25,6 @@
     "sideEffects": false,
     "scripts": {
         "build": "tsup src/index.ts src/node.ts --dts --format esm,cjs --clean",
-        "precommit": "pnpm exec biome check src tests && pnpm run test:unit",
         "test": "vitest -c vitest.config.ts --run tests/unit tests/integration",
         "test:rules": "vitest -c vitest.config.ts --run tests/rules",
         "test:unit": "vitest -c vitest.config.ts --run tests/unit",

@@ -15,6 +15,7 @@ import {
     inMemoryPersistence,
     onAuthStateChanged,
     signInAnonymously,
+    type User,
 } from 'firebase/auth'
 import { connectFirestoreEmulator, type Firestore, getFirestore } from 'firebase/firestore'
 
@@ -47,20 +48,22 @@ async function waitForUser(auth: Auth): Promise<string> {
         return auth.currentUser.uid
     }
     await signInAnonymously(auth)
-    await new Promise<void>((res, rej) => {
+    const user = await new Promise<User>((resolve, reject) => {
         const unsub = onAuthStateChanged(
             auth,
-            async (u) => {
+            (u) => {
                 if (u) {
                     unsub()
-                    await getIdToken(u, true)
-                    res()
+                    void getIdToken(u, true).then(
+                        () => resolve(u),
+                        (error) => reject(error),
+                    )
                 }
             },
-            rej,
+            reject,
         )
     })
-    return auth.currentUser!.uid
+    return user.uid
 }
 
 export async function ensureFirebase(

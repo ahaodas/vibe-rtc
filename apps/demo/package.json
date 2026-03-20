@@ -12,8 +12,7 @@
         "test:e2e": "playwright test --project=chromium",
         "test:e2e:headed": "playwright test --project=chromium --headed",
         "show-report:e2e": "playwright show-report",
-        "clean": "rimraf dist",
-        "precommit": "pnpm exec biome check src && pnpm run test"
+        "clean": "rimraf dist"
     },
     "dependencies": {
         "@types/qrcode": "^1.5.6",

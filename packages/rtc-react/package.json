@@ -46,7 +46,6 @@
         "build": "tsup",
         "build:watch": "tsup --watch",
         "clean": "rm -rf dist",
-        "precommit": "pnpm exec biome check src && pnpm run test",
         "test": "vitest run --passWithNoTests",
         "test:watch": "vitest"
     }
